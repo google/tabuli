@@ -14,6 +14,9 @@ endif()
 # Initialize the SDK
 pico_sdk_init()
 
+set(CMAKE_C_FLAGS_RELEASE "-O3")
+set(CMAKE_CXX_FLAGS_RELEASE "-O3")
+
 add_executable(piccolo
   src/piccolo.c
   src/payload.s

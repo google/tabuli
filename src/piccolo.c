@@ -6,64 +6,107 @@
 
 #include "pico/stdlib.h"
 
-#define R2(X)                                                                  \
+#define R4(X)                                                                  \
+  X;                                                                           \
+  X;                                                                           \
   X;                                                                           \
   X;
-#define R4(X)                                                                  \
-  R2(X);                                                                       \
-  R2(X);
-#define R8(X)                                                                  \
+#define R16(X)                                                                 \
+  R4(X);                                                                       \
+  R4(X);                                                                       \
   R4(X);                                                                       \
   R4(X);
-#define R16(X)                                                                 \
-  R8(X);                                                                       \
-  R8(X);
-#define R32(X)                                                                 \
+#define R64(X)                                                                 \
+  R16(X);                                                                      \
+  R16(X);                                                                      \
   R16(X);                                                                      \
   R16(X);
-#define R64(X)                                                                 \
-  R32(X);                                                                      \
-  R32(X);
+#define R256(X)                                                                \
+  R64(X);                                                                      \
+  R64(X);                                                                      \
+  R64(X);                                                                      \
+  R64(X);
+
+#define CONCAT(A, B) DO_CONCAT(A, B)
+#define DO_CONCAT(A, B) A##B
+
+#define SAMPLE_BITS 8
+#define sample_t CONCAT(CONCAT(uint, SAMPLE_BITS), _t)
+
+extern uint8_t payload_start;
+extern uint8_t payload_end;
+
+#define NOP asm volatile("nop");
+
+#define SYNC 1
 
 int main() {
-  const uint PIN = 15;
-  gpio_init(PIN);
-  gpio_set_dir(PIN, GPIO_OUT);
+  for (uint32_t i = 0; i < 8; ++i) {
+    gpio_init(i);
+    gpio_set_dir(i, GPIO_OUT);
+  }
+
+  sample_t *sound = &payload_start;
+  sample_t *sound_end = &payload_end;
+  uint32_t num_samples = sound_end - sound;
 
   io_wo_32 *set = &sio_hw->gpio_set;
-  uint32_t pin = 1 << PIN;
 
-  const uint32_t FREQ = 44100;
-
-  const uint32_t LUT_BITS = 14;
-  const uint32_t LUT_LEN = 1 << LUT_BITS;
-  const uint32_t SHIFT = 32 - LUT_BITS;
-  const uint32_t CLK_PER_STEP = 8;
-  const uint32_t NUM_STEPS = 32;
-  const uint32_t CLK_PER_LOAD = 15; // between 14 and 15; but I'd expect 10!
-  const uint32_t CLK_PER_LOOP = CLK_PER_STEP * NUM_STEPS + CLK_PER_LOAD;
-  const uint32_t CLK_PER_SECOND = 125000000; // 125MHz
-  // FREQ Hz === ADD * LOOP_PER_SECOND == FREQ * 2^32
-  // ADD = 2^32 * FREQ / (CLK_PER_SECOND / CLK_PER_LOOP)
-  // ADD = 2^32 * FREQ * CLK_PER_LOOP / CLK_PER_SECOND
-  const uint32_t ADD = (4294967296.0 * FREQ * CLK_PER_LOOP) / CLK_PER_SECOND;
-
-  uint32_t cntr2 = 0;
-  uint32_t q = 0;
+  uint32_t cntr = 0;
+  uint32_t q0 = 0;
+  uint32_t q1 = 0;
+  uint32_t q2 = 0;
+  uint32_t q3 = 0;
+  uint32_t q4 = 0;
+  uint32_t q5 = 0;
+  uint32_t q6 = 0;
+  uint32_t q7 = 0;
   while (true) {
-    cntr2 += ADD;
-    set[0] = pin;
-    asm volatile("" ::: "memory");
-    uint32_t vol = sin[cntr2 >> SHIFT];
-    uint32_t mask;
+    cntr += 2;
+    // 0 when need to wrap, 1 otherwise
+    uint32_t not_wrap = (cntr - num_samples) >> 31;
+    cntr &= -not_wrap; // 0 only when need to wrap, no-op otherwise
+    uint32_t vol0 = sound[cntr];
+    uint32_t vol1 = sound[cntr + 1];
+    uint32_t vol2 = sound[cntr + 2];
+    uint32_t vol3 = sound[cntr + 3];
+    uint32_t vol4 = sound[cntr + 4];
+    uint32_t vol5 = sound[cntr + 5];
+    uint32_t vol6 = sound[cntr + 6];
+    uint32_t vol7 = sound[cntr + 7];
 
-#define WORK                                                                   \
-  q -= vol;                                                                    \
-  mask = q >> 16;                                                              \
-  q += mask;                                                                   \
-  set[mask & 1] = pin;                                                         \
-  asm volatile("" ::: "memory");
+    uint32_t prev_pin = 0;
 
-    R32(WORK);
+    // Nch | SYNC | ASYNC |
+    // ----+------+-------+
+    //   1 |   11 |    12 | ~ 515 good
+    //   2 |   20 |    20 | ~ 283 good
+    //   3 |   32 |    30 | ~ 189 ok
+    //   4 |   42 |    40 | ~ 135 almost ok
+    //   5 |   48 |    51 | ~ 118 not so bad
+    //   6 |   63 |    64 | ~ 90 bad
+    //   7 |   75 |    75 | ~ 75 bad
+    //   8 |   85 |    86 | ~ 66 bad
+
+#define STEP(I)                                                                \
+  q##I -= vol##I;                                                              \
+  mask = q##I >> (32 - SAMPLE_BITS);                                           \
+  q##I += mask;                                                                \
+  if (SYNC) {                                                                  \
+    pin |= mask & (1u << I);                                                   \
+  } else {                                                                     \
+    set[mask & 1] = (1u << I);                                                 \
+  }
+
+    for (uint32_t j = 0; j < 283; ++j) {
+      uint32_t pin = 0;
+      uint32_t mask;
+      STEP(0);  STEP(1); // STEP(2); STEP(3);  STEP(4); STEP(5); STEP(6); STEP(7);
+      if (SYNC) {
+        set[2] = pin ^ prev_pin;
+        prev_pin = pin;
+      }
+    }
+    set[1] = 0xFF;
   }
 }
