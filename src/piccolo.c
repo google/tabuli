@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: BSD-3-Clause
  */
 
+#include "hardware/vreg.h"
 #include "pico/stdlib.h"
 
 #define R4(X)                                                                  \
@@ -39,8 +40,12 @@ extern uint8_t payload_end;
 #define NOP asm volatile("nop");
 
 #define SYNC 1
+#define NUM_CHANNELS 8
 
 int main() {
+  vreg_set_voltage(VREG_VOLTAGE_1_30);
+  set_sys_clock_khz(420000, true);
+
   for (uint32_t i = 0; i < 8; ++i) {
     gpio_init(i);
     gpio_set_dir(i, GPIO_OUT);
@@ -79,29 +84,56 @@ int main() {
 
     // Nch | SYNC | ASYNC |
     // ----+------+-------+
-    //   1 |   11 |    12 | ~ 515 good
-    //   2 |   20 |    20 | ~ 283 good
-    //   3 |   32 |    30 | ~ 189 ok
-    //   4 |   42 |    40 | ~ 135 almost ok
-    //   5 |   48 |    51 | ~ 118 not so bad
-    //   6 |   63 |    64 | ~ 90 bad
-    //   7 |   75 |    75 | ~ 75 bad
-    //   8 |   85 |    86 | ~ 66 bad
+    //   1 |   11 |    12 |
+    //   2 |   20 |    20 |
+    //   3 |   32 |    30 |
+    //   4 |   42 |    40 |
+    //   5 |   48 |    51 |
+    //   6 |   63 |    64 |
+    //   7 |   75 |    75 |
+    //   8 |   85 |    86 |
+
+    const uint32_t kSubSamples[9] = {0, 1731, 952, 595, 453, 397, 302, 254, 224};
 
 #define STEP(I)                                                                \
-  q##I -= vol##I;                                                              \
-  mask = q##I >> (32 - SAMPLE_BITS);                                           \
-  q##I += mask;                                                                \
-  if (SYNC) {                                                                  \
-    pin |= mask & (1u << I);                                                   \
-  } else {                                                                     \
-    set[mask & 1] = (1u << I);                                                 \
+  {                                                                            \
+    q##I -= vol##I;                                                            \
+    mask = q##I >> (32 - SAMPLE_BITS);                                         \
+    q##I += mask;                                                              \
+    if (SYNC) {                                                                \
+      pin |= mask & (1u << I);                                                 \
+    } else {                                                                   \
+      set[mask & 1] = (1u << I);                                               \
+    }                                                                          \
   }
 
-    for (uint32_t j = 0; j < 283; ++j) {
+    for (uint32_t j = 0; j < kSubSamples[NUM_CHANNELS]; ++j) {
       uint32_t pin = 0;
       uint32_t mask;
-      STEP(0);  STEP(1); // STEP(2); STEP(3);  STEP(4); STEP(5); STEP(6); STEP(7);
+      if (NUM_CHANNELS > 0) {
+        STEP(0);
+      }
+      if (NUM_CHANNELS > 1) {
+        STEP(1);
+      }
+      if (NUM_CHANNELS > 2) {
+        STEP(2);
+      }
+      if (NUM_CHANNELS > 3) {
+        STEP(3);
+      }
+      if (NUM_CHANNELS > 4) {
+        STEP(4);
+      }
+      if (NUM_CHANNELS > 5) {
+        STEP(5);
+      }
+      if (NUM_CHANNELS > 6) {
+        STEP(6);
+      }
+      if (NUM_CHANNELS > 7) {
+        STEP(7);
+      }
       if (SYNC) {
         set[2] = pin ^ prev_pin;
         prev_pin = pin;

@@ -22,6 +22,12 @@ add_executable(piccolo
   src/payload.s
 )
 
+# pico_set_binary_type(piccolo copy_to_ram)
+
+pico_define_boot_stage2(piccolo-div4 ${PICO_DEFAULT_BOOT_STAGE2_FILE})
+target_compile_definitions(piccolo-div4 PRIVATE PICO_FLASH_SPI_CLKDIV=4)
+pico_set_boot_stage2(piccolo piccolo-div4)
+
 # pull in common dependencies
 target_link_libraries(piccolo pico_stdlib)
 
