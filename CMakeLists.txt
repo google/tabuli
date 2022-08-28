@@ -33,3 +33,25 @@ target_link_libraries(piccolo pico_stdlib)
 
 # create map/bin/hex file etc.
 pico_add_extra_outputs(piccolo)
+
+add_executable(piccolo_wireless
+  src/piccolo_wireless.c
+)
+
+target_compile_definitions(piccolo_wireless PRIVATE
+  WIFI_SSID=$ENV{WIFI_SSID}
+  WIFI_PASSWORD=$ENV{WIFI_PASSWORD}
+)
+
+pico_enable_stdio_usb(piccolo_wireless 1)
+pico_enable_stdio_uart(piccolo_wireless 0)
+  
+target_include_directories(piccolo_wireless PRIVATE
+  ${CMAKE_CURRENT_LIST_DIR}/src
+)
+
+target_link_libraries(piccolo_wireless
+  pico_cyw43_arch_lwip_poll
+  pico_stdlib
+)
+pico_add_extra_outputs(piccolo_wireless)
