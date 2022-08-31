@@ -7,33 +7,36 @@
 #define CONCAT(A, B) DO_CONCAT(A, B)
 #define DO_CONCAT(A, B) A##B
 
-#define SAMPLE_BITS 8
+#define SAMPLE_BITS 16
 #define sample_t CONCAT(CONCAT(uint, SAMPLE_BITS), _t)
 
 extern uint8_t payload_start;
-extern uint8_t payload_end;
 
 #define NOP asm volatile("nop");
 
 #define CPU_FREQ_MHZ 420
 #define SAMPLING_FREQ 22050
 
-#define CLK_PER_LOOP 181
-// 8ch-c1:181
-// 8ch-c4:189
-// 8ch-wt:166
+#define CLK_PER_LOOP 147
+//         |DIV|RAM|
+// --------+---+---+
+// 2x4ch-c1|110| 95|
+// 2x5ch-c1|130|113|
+// 2x6ch-c1|148|133|
+// 2x7ch-c1|   |147|
 
 #define MAX_TICK 0xFFFFFF
-#define DEBUG_CLK 0
+#define DEBUG_CLK 1
 
-#define NUM_CHANNELS 8
+//#define NUM_CHANNELS 8
+// Actually 2x more
+#define NUM_CHANNELS 7
 
 #define STEP(I)                                                                \
   {                                                                            \
-    q##I -= sound[cntr + I];                                                   \
-    mask = (int32_t)(q##I) >> 31;                                              \
-    q##I += mask & 0x100;                                                      \
-    quantized |= mask & (1u << I);                                             \
+    q##I += sound[cntr + I];                                                   \
+    quantized |= (q##I & 0x80008000) >> (15 - I);                              \
+    q##I &= 0x7FFF7FFF;                                                        \
   }
 
 int main() {
@@ -43,13 +46,11 @@ int main() {
   for (uint32_t i = 0; i < 16; ++i) {
     gpio_init(i);
     gpio_set_dir(i, GPIO_OUT);
-    //gpio_set_slew_rate(i, GPIO_SLEW_RATE_FAST);
+    // gpio_set_slew_rate(i, GPIO_SLEW_RATE_FAST);
   }
   // gpio_set_drive_strength(0, GPIO_DRIVE_STRENGTH_12MA);
 
-  sample_t *sound = &payload_start;
-  sample_t *sound_end = &payload_end;
-  uint32_t num_samples = sound_end - sound;
+  uint32_t *sound = (uint32_t*)&payload_start;
 
   // io_wo_32 *set = &sio_hw->gpio_set;
   // io_wo_32 *clr = &sio_hw->gpio_clr;
@@ -68,11 +69,6 @@ int main() {
 
   uint32_t bit0 = 0;
   uint32_t bit1 = 0;
-  uint32_t bit2 = 0;
-  uint32_t bit3 = 0;
-  uint32_t bit4 = 0;
-  uint32_t bit5 = 0;
-  uint32_t bit6 = 0;
   uint32_t prev_pin = 0;
 
   if (DEBUG_CLK) {
@@ -89,12 +85,9 @@ int main() {
     uint32_t clk = -((kClkPerSecond - sampler) >> 31);
     sampler -= clk & kClkPerSecond;
     // Currently only 2 channels.
-    cntr += clk & 2;
-    // 0 when need to wrap, 1 otherwise
-    uint32_t not_wrap = (cntr - num_samples) >> 31;
-    cntr &= -not_wrap; // 0 only when need to wrap, no-op otherwise
+    cntr += clk & 1;
+    cntr &= 0x7FFF;
     uint32_t quantized = 0;
-    uint32_t mask;
     if (NUM_CHANNELS > 0) {
       STEP(0);
     }
@@ -119,17 +112,13 @@ int main() {
     if (NUM_CHANNELS > 7) {
       STEP(7);
     }
+    const uint32_t kSoundPinsMask = (1 << (NUM_CHANNELS * 2)) - 1;
+    quantized = (quantized | (quantized >> (16 - NUM_CHANNELS))) & kSoundPinsMask;
     uint32_t want_toggle = quantized ^ prev_pin;
     uint32_t carry0 = want_toggle & bit0;
     bit0 ^= want_toggle;
     uint32_t carry1 = carry0 & bit1;
     bit1 ^= carry0;
-    uint32_t carry2 = carry1 & bit2;
-    bit2 ^= carry1;
-    uint32_t carry3 = carry2 & bit3;
-    bit3 ^= carry2;
-    uint32_t carry4 = carry3 & bit4;
-    bit4 ^= carry3;
 
     uint32_t toggle = carry1;
     prev_pin ^= toggle;
@@ -139,7 +128,7 @@ int main() {
       uint32_t tick = systick_hw->cvr;
       uint32_t delta = MAX_TICK - tick;
       uint32_t in_time = ((delta - CLK_PER_LOOP) >> 31) & 1;
-      *togl = in_time << 8;
+      *togl = in_time << 15;
       systick_hw->cvr = 0;
     }
   }
