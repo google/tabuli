@@ -14,11 +14,11 @@ print(f"Range after: {np.min(data1)}..{np.max(data1)}")
 print(f"Data len: {len(data1)}, data type: {data1.dtype}")
 
 print(">>> Sample 2")
-(rate2, data2) = wavfile.read('sample2.wav')
+(rate2, data2) = wavfile.read('sample1.wav')
 print(f"Rate: {rate2}")
 print(f"Range before: {np.min(data2)}..{np.max(data2)}")
 data2 = data2 // 2
-data2 = data2 + 16384
+data2 = data2 + 16384 + 8192 + 3500
 data2 = data2.astype('<u2')
 print(f"Range after: {np.min(data2)}..{np.max(data2)}")
 print(f"Data len: {len(data2)}, data type: {data2.dtype}")
