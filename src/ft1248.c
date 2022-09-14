@@ -34,6 +34,8 @@ int main() {
   gpio_clr_mask(0xFF);
   gpio_set_mask(0x40);
 
+  uint8_t expected = 0;
+
   while (1) { // Read in infinite loop.
     gpio_set_mask(0x800); // status cmd on
     // Send "read" command first.
@@ -99,15 +101,22 @@ int main() {
       gpio_clr_mask(0x100);
       NOP;
       NOP;
-      // uint8_t data = pins;
+      uint8_t data = pins;
       uint32_t nak = pins & 0x400;
       if (nak) {
         // Read aborted
         break;
       }
+      if (data != expected) {
+        gpio_set_mask(0x2000); // status error on
+      } else {
+        gpio_clr_mask(0x2000); // status error off
+      }
+      expected = data + 1;
     }
     // Restore status-quo
     gpio_clr_mask(0x1000); // status read off
+    gpio_clr_mask(0x2000); // status error off
     gpio_set_mask(0x200);
     NOP;
     NOP;
