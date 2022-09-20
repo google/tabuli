@@ -36,11 +36,16 @@ endif()
 if (BUILD_FT1248)
 add_executable(ft1248
   src/ft1248.c
+  src/sd1306.c
 )
 pico_set_binary_type(ft1248 copy_to_ram)
 pico_define_boot_stage2(ft1248-div4 ${PICO_DEFAULT_BOOT_STAGE2_FILE})
 target_compile_definitions(ft1248-div4 PRIVATE PICO_FLASH_SPI_CLKDIV=4)
 pico_set_boot_stage2(ft1248 ft1248-div4)
-target_link_libraries(ft1248 pico_stdlib)
+target_link_libraries(ft1248
+  hardware_i2c
+  pico_multicore
+  pico_stdlib
+)
 pico_add_extra_outputs(ft1248)
 endif()
