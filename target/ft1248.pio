@@ -11,11 +11,8 @@
 .define CLK_LO 0                   ; SS_N = 0, CLK = 0
 .define CLK_HI 2                   ; SS_N = 0, CLK = 1
 
-resetA:                            ;
-   ;nop            side CLK_LO [0] ; | phase adjustment after NAK
-                                   ; \---
 public entry_point:                ; start of program
-resetB:                            ; /---
+reset:                             ; /---
     mov osr, !null side RESET  [6] ; | fill OSR with ones
                                    ; \---
                                    ; /---
@@ -25,13 +22,13 @@ resetB:                            ; /---
                                    ; \---
                                    ; /---
     out pindirs, 8 side CLK_HI [6] ; | bus turnaround
-    nop            side CLK_LO [4] ; | take into account 2 tick input latency + some extra
-    jmp pin resetB side CLK_LO [1] ; | RXF# is up, no input
+    nop            side CLK_LO [4] ; | take into account input latency
+    jmp pin reset  side CLK_LO [1] ; | RXF# is up, start the process over
                                    ; \---
 .wrap_target                       ; /---
     nop            side CLK_HI [6] ; |
-    nop            side CLK_LO [4] ; | take into account 2 tick input latency + some extra
-    jmp pin resetA side CLK_LO [0] ; | got NAK?
+    nop            side CLK_LO [4] ; | take into account input latency
+    jmp pin reset  side CLK_LO [0] ; | got NAK? start the process over
     in pins, 8     side CLK_LO [0] ; | read data
 .wrap                              ; | zero-cost jump
                                    ; \---

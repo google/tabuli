@@ -1,4 +1,5 @@
 #include "display.h"
+
 #include "ft1248.pio.h"
 #include "hardware/gpio.h"
 #include "hardware/vreg.h"
@@ -7,7 +8,6 @@
 #include <hardware/pio.h>
 
 #include <stdint.h>
-#include <stdio.h>
 
 #define NOP asm volatile("nop");
 
@@ -64,6 +64,14 @@ void ft1248_program_init(void) {
   pio_sm_init(pio, sm, ft1248_offset_entry_point, &c);
 }
 
+static void print_hex(char* out, uint32_t value) {
+  for (int32_t i = 7; i >= 0; i--) {
+    uint32_t digit = value & 0xF;
+    out[i] = digit + ((digit < 10) ? '0' : ('A' - 10));
+    value >>= 4;
+  }
+}
+
 void core1_main() {
   display_init();
   display_print(0, 0, "DEAD");
@@ -72,7 +80,7 @@ void core1_main() {
   display_print(12, 18, "BABE");
   display_flush();
 
-  char txt[64];
+  char txt[33] = "01234567:01234567/01234567      ";
 
   uint32_t next_line = 0;
   uint32_t index = 0;
@@ -88,8 +96,10 @@ void core1_main() {
     uint32_t iter = multicore_fifo_pop_blocking();
     uint32_t errors = multicore_fifo_pop_blocking();
     uint32_t bytes = multicore_fifo_pop_blocking();
-    sprintf(txt, "%08X%c%08X/%08X     ", iter, index & 1 ? ':' : ' ', errors,
-            bytes);
+    txt[8] = index & 1 ? ':' : ' ';
+    print_hex(txt, iter);
+    print_hex(txt + 9, errors);
+    print_hex(txt + 18, bytes);
     display_print(0, next_line * 6, txt);
     display_flush();
     next_line++;
