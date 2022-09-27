@@ -28,5 +28,5 @@ OFFSET = 4096
 interleaved[0::2] = data1[OFFSET:MAX_SAMPLES + OFFSET]
 interleaved[1::2] = data2[OFFSET:MAX_SAMPLES + OFFSET]
 
-with open("src/payload.bin", "wb") as file:
+with open("target/payload.bin", "wb") as file:
   file.write(interleaved.tobytes())

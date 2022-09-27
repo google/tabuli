@@ -44,7 +44,7 @@ int main(int argc, char **argv) {
   struct libusb_device_handle *usb_dev = nullptr;
   int interface = 0;
 
-  int tx_chunk_size = 2048 * 512;
+  int tx_chunk_size = 2048 * 512; // 1MB
   std::vector<unsigned char> tx_buf(tx_chunk_size);
   for (size_t i = 0; i < tx_chunk_size; i++) {
     tx_buf[i] = i;
@@ -145,7 +145,7 @@ int main(int argc, char **argv) {
     int actual_length;
     if (libusb_bulk_transfer(usb_dev, /* endpoint */ 0x02, tx_buf.data(),
                              tx_chunk_size, &actual_length,
-                             /* timeout */ 50) < 0) {
+                             /* timeout */ 5000) < 0) {
       fprintf(stderr, "write failed\n");
       return 0;
     }

@@ -1,0 +1,37 @@
+.program ft1248
+.side_set 2
+
+; IN       : [D0, ... D7], autopush on 32-bits
+; OUT      : [D0, ... D7] (not used with OSR)
+; SIDE_SET : [SS_N, CLK], mandatory, value
+; JMP      : [MISO]
+; FIFO RX-joined
+
+.define RESET  1                   ; SS_N = 1, CLK = 0
+.define CLK_LO 0                   ; SS_N = 0, CLK = 0
+.define CLK_HI 2                   ; SS_N = 0, CLK = 1
+
+resetA:                            ;
+   ;nop            side CLK_LO [0] ; | phase adjustment after NAK
+                                   ; \---
+public entry_point:                ; start of program
+resetB:                            ; /---
+    mov osr, !null side RESET  [6] ; | fill OSR with ones
+                                   ; \---
+                                   ; /---
+    out pindirs, 8 side CLK_HI [6] ; | switch to output to send command
+                                   ; | values are considered to be already set
+    mov osr, null  side CLK_LO [6] ; | fill OSR with zeroes
+                                   ; \---
+                                   ; /---
+    out pindirs, 8 side CLK_HI [6] ; | bus turnaround
+    nop            side CLK_LO [4] ; | take into account 2 tick input latency + some extra
+    jmp pin resetB side CLK_LO [1] ; | RXF# is up, no input
+                                   ; \---
+.wrap_target                       ; /---
+    nop            side CLK_HI [6] ; |
+    nop            side CLK_LO [4] ; | take into account 2 tick input latency + some extra
+    jmp pin resetA side CLK_LO [0] ; | got NAK?
+    in pins, 8     side CLK_LO [0] ; | read data
+.wrap                              ; | zero-cost jump
+                                   ; \---
