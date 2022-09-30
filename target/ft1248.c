@@ -36,7 +36,7 @@ void ft1248_program_init(void) {
   sm_config_set_wrap(&c, ft1248_wrap_target, ft1248_wrap);
   sm_config_set_jmp_pin(&c, miso_pin);
   // TODO: shift-right?
-  sm_config_set_in_shift(&c, /* shift_right */ false, /* autopush */ true,
+  sm_config_set_in_shift(&c, /* shift_right */ true, /* autopush */ true,
                          /* push threshold */ 32);
   // sm_config_set_out_shift(&c, shift_right, autopull, pull_threshold);
   sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_RX);
@@ -129,17 +129,42 @@ void core0_main() {
 
   pio_sm_set_enabled(pio, sm, true);
 
+  // bytes per second: 22579200 = 44100*256*2
+  // bytes per 1000us: 22579.2
+  uint32_t bytes_step_int = 22579;
+  uint32_t bytes_step_rem = 2;
+  uint32_t bytes_step_div = 10;
+  uint32_t tick_step = 1000;
+  uint32_t tick_hysteresis = tick_step;
+
+  uint64_t next_tick = time_us_64() + tick_step;
+  uint32_t bytes_target = 0;
+  uint32_t bytes_tail = 0;
+
   while (1) {
+    if (time_us_64() >= next_tick) {
+      // oops, did not meet thoughput target
+      next_tick = time_us_64() + tick_step;
+      if (bytes_target > bytes_step_int) {
+        errors++;
+      }
+      bytes = 0;
+      bytes_target = bytes_step_int;
+      bytes_tail = bytes_step_rem;
+      // TODO: drain input?
+    }
     while (!pio_sm_is_rx_fifo_empty(pio, sm)) {
       uint32_t vals = pio_sm_get(pio, sm);
       bytes += 4;
+      /*
       iter += vals & 0xFF;
       vals >>= 8;
       iter += vals & 0xFF;
       vals >>= 8;
       iter += vals & 0xFF;
       vals >>= 8;
-      iter += vals;
+      iter += vals;*/
+      iter ^= vals;
     }
     // Expected sum for 64MiB sequence: 0xfe00_0000
     if (multicore_fifo_rvalid()) {
@@ -147,6 +172,18 @@ void core0_main() {
       multicore_fifo_push_blocking(iter);
       multicore_fifo_push_blocking(errors);
       multicore_fifo_push_blocking(bytes);
+    }
+    if (bytes >= bytes_target) {
+      bytes_target += bytes_step_int;
+      bytes_tail += bytes_step_rem;
+      if (bytes_tail >= bytes_step_div) {
+        bytes_tail -= bytes_step_div;
+        bytes_target++;
+      }
+      while (time_us_64() < next_tick - tick_hysteresis) {
+        // busy-wait
+      }
+      next_tick += tick_step;
     }
   }
 }

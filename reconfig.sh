@@ -10,7 +10,7 @@ rm -rf ./build-host
 rm -rf ./build-target
 mkdir -p ./build-target/deps
 
-python3 make_payload.py
+#python3 make_payload.py
 
 cmake -B build-host ./host -DCMAKE_EXPORT_COMPILE_COMMANDS=1
 # --graphviz=./build-target/deps/target.dot

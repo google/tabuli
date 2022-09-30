@@ -7,7 +7,7 @@ project(piccolo-target C CXX ASM)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
 
-set(BUILD_PICCOLO 0)
+set(BUILD_PICCOLO 1)
 set(BUILD_FT1248 1)
 set(USE_DISPLAY 1)
 
@@ -17,8 +17,8 @@ endif()
 # Initialize the SDK
 pico_sdk_init()
 
-set(CMAKE_C_FLAGS_RELEASE "-O3 -fno-data-sections")
-set(CMAKE_CXX_FLAGS_RELEASE "-O3 -fno-data-sections")
+set(CMAKE_C_FLAGS_RELEASE "-O3 -g3 -fno-data-sections")
+set(CMAKE_CXX_FLAGS_RELEASE "-O3 -g3 -fno-data-sections")
 
 if (NOT USE_DISPLAY)
   target_compile_definitions(hardware_timer INTERFACE PICO_TIME_DEFAULT_ALARM_POOL_DISABLED=1)
@@ -27,13 +27,15 @@ endif()
 if (BUILD_PICCOLO) 
   add_executable(piccolo
     piccolo.c
-    payload.s
   )
   pico_set_binary_type(piccolo copy_to_ram)
   pico_define_boot_stage2(piccolo-div4 ${PICO_DEFAULT_BOOT_STAGE2_FILE})
   target_compile_definitions(piccolo-div4 PRIVATE PICO_FLASH_SPI_CLKDIV=4)
   pico_set_boot_stage2(piccolo piccolo-div4)
-  target_link_libraries(piccolo pico_stdlib)
+  target_link_libraries(piccolo
+    hardware_pio
+    pico_stdlib
+  )
   pico_add_extra_outputs(piccolo)
 endif()
 
