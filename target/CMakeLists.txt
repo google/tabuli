@@ -28,6 +28,9 @@ if (BUILD_PICCOLO)
   add_executable(piccolo
     piccolo.c
   )
+
+  pico_generate_pio_header(piccolo ${CMAKE_CURRENT_LIST_DIR}/sound.pio)
+
   pico_set_binary_type(piccolo copy_to_ram)
   pico_define_boot_stage2(piccolo-div4 ${PICO_DEFAULT_BOOT_STAGE2_FILE})
   target_compile_definitions(piccolo-div4 PRIVATE PICO_FLASH_SPI_CLKDIV=4)
