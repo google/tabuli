@@ -60,20 +60,20 @@ void sound_program_init(uint32_t pio_n) {
 // FIFO bits: 8 * 32 = 256
 // Number of channels per PIO: 2
 // Bits per channel ber PIO: 256 / 2 = 128
-// Clk per PIO bit: 7
-// Clk per loop: 128 * 7 = 896
-// Avg clk per channel per loop: 896 / 16 = 8 * 7 = 56
-// Oversampling: 420M / 44100 / 896 ~= 10.63
-// Sample step per loop: 44100 * 896 / 420M ~= 0.094
-// -//- * 65536: 6165 + 1959/3125
+// Clk per PIO bit: 8
+// Clk per loop: 128 * 8 = 1024
+// Avg clk per channel per loop: 1024 / 16 = 8 * 8 = 64
+// Oversampling: 420M / 44100 / 1024 ~= 9.3
+// Sample step per loop: 44100 * 1024 / 420M ~= 0.107
+// -//- * 65536: 7046 + 1346/3125
 
-uint32_t kSampleStepInt = 6165;
-uint32_t kSampleStepRem = 1959;
+uint32_t kSampleStepInt = 7046;
+uint32_t kSampleStepRem = 1346;
 uint32_t kSampleStepDiv = 3125;
 
 #define MAX_TICK 0xFFFFFF
 #define DEBUG_CLK 0
-#define CLK_PER_LOOP (896 + 80)
+#define CLK_PER_LOOP (1024-0)
 
 uint16_t samples[256 * 16 + 16];
 
@@ -309,7 +309,9 @@ int main() {
     for (uint32_t j = 0; j < 16; ++j) {
       samples[i * 16 + j] = sinw[(i * (j + 1)) & 0xFF];
     }
-    samples[i * 16 + 0] = sinw[i] / 4 + 3 * 16384;
+    samples[i * 16 + 1] = sinw[i] / 2 + 32768 - (32768 / 2);
+    samples[i * 16 + 2] = sinw[i] / 2 + 32768 - (32768 / 2) - 16384;
+    samples[i * 16 + 3] = sinw[i] / 2 + 32768 - (32768 / 2) + 16384;
   }
   for (uint32_t j = 0; j < 16; ++j) {
     samples[256 * 16 + j] = samples[j];
