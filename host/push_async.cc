@@ -3,8 +3,11 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <libusb.h>
+#include <fstream>
+#include <iostream>
 #include <vector>
+
+#include <libusb.h>
 
 namespace {
 
@@ -33,42 +36,120 @@ ScopeGuard<Callback> MakeScopeGuard(Callback &&callback) {
   return ScopeGuard<Callback>{std::forward<Callback>(callback)};
 }
 
-} // namespace
-
 std::chrono::steady_clock::time_point start;
 #define NUM_TRANSFERS 3
 libusb_transfer *transfers[NUM_TRANSFERS] = {0};
-#define CHUNK_SIZE (22 * 1024)
-std::vector<unsigned char> tx_buf(NUM_TRANSFERS *CHUNK_SIZE);
+#define CHUNK_SIZE (16 * 1024)
+std::vector<unsigned char> tx_buf;
 size_t free_transfer;
 size_t num_chunks = 0;
+size_t next_offset = 0;
+size_t msg_id = 0;
 
 void on_transfer_complete(struct libusb_transfer *transfer) {
   auto end = std::chrono::high_resolution_clock::now();
   auto delta =
-      std::chrono::duration_cast<std::chrono::milliseconds>(end - start)
+      std::chrono::duration_cast<std::chrono::microseconds>(end - start)
           .count();
   num_chunks++;
   size_t this_transfer = (size_t)transfer->user_data;
   if ((num_chunks & 0xFF) == 0) {
     float size = num_chunks * CHUNK_SIZE / 1024.0 / 1024.0;
-    float speed = size / (static_cast<size_t>(delta) / 1000.0);
-    fprintf(stderr, "sent: %0.1fMiB, time: %llums, speed: %0.3fMiB/s\n", size, delta, speed);
+    float speed = size / (static_cast<size_t>(delta) / 1000000.0);
+    fprintf(stderr,
+            "%04zX | sent: %0.1fMiB, time: %0.3fms, speed: %0.3fMiB/s\n",
+            msg_id++, size, delta / 1000.0f, speed);
     num_chunks = 0;
     start = end;
   }
 
   libusb_fill_bulk_transfer(
       transfers[free_transfer], transfer->dev_handle, /* endpoint */ 0x02,
-      tx_buf.data() + free_transfer * CHUNK_SIZE, CHUNK_SIZE,
+      tx_buf.data() + next_offset, CHUNK_SIZE,
       &on_transfer_complete,
       /* user data */ (void *)free_transfer, /* timeout */ 0);
   libusb_submit_transfer(transfers[free_transfer]);
+  next_offset += CHUNK_SIZE;
+  if (next_offset > tx_buf.size()) {
+    next_offset = 0;
+  }
 
   free_transfer = this_transfer;
 }
 
+void readFile(const char *fname, std::vector<unsigned char> *out) {
+  std::ifstream file(fname, std::ios::in | std::ios::binary);
+  if (!file.is_open()) {
+    fprintf(stderr, "Failed to open %s\n", fname);
+    __builtin_trap();
+  }
+  file.seekg(0, std::ios::end);
+  size_t byteLen = file.tellg();
+  byteLen &= ~(CHUNK_SIZE - 1);
+  if (byteLen == 0) {
+    fprintf(stderr, "Input file too short (%zu) %s\n", byteLen, fname);
+    __builtin_trap();
+  }
+  file.seekg(0, std::ios::beg);
+  out->resize(byteLen);
+
+  file.read(reinterpret_cast<char *>(out->data()), byteLen);
+  if (!file.good()) {
+    fprintf(stderr, "Failed to read %s\n", fname);
+    __builtin_trap();
+  }
+  file.close();
+}
+
+} // namespace
+
 int main(int argc, char **argv) {
+  if (argc == 2) {
+    fprintf(stderr, "Loading input file: %s\n", argv[1]);
+    readFile(argv[1], &tx_buf);
+    size_t byteLen = tx_buf.size();
+    fprintf(stderr, "Estimated sample len: %0.3fs\n",
+            byteLen / (44100.f * 256 * 2));
+  } else {
+    tx_buf.resize(NUM_TRANSFERS * CHUNK_SIZE);
+    for (size_t i = 0; i < tx_buf.size(); i++) {
+      uint8_t result = 0;
+      size_t n = (i >> 5) & 0xFFF; // number of word in the stream
+      size_t block_offset = i & 0x1F;
+      size_t value_bit_offset = block_offset >> 1;
+      size_t branch_offset = (block_offset & 1) * 8;
+      for (size_t bit = 0; bit < 8; ++bit) {
+        size_t branch = branch_offset + bit;
+        size_t value = branch | (n << 4);
+        size_t value_bit = value >> value_bit_offset;
+        result |= value_bit << bit;
+      }
+      tx_buf[i] = result;
+    }
+  }
+
+  const auto encode_byte = [](uint8_t b) {
+    // simple, but works well only for for 0..189
+    if (b > 189) {
+      return 0;
+    }
+    return b + ((b + 1) >> 7);
+  };
+
+  const auto decode_byte = [](uint8_t b) { return b - (b >> 7); };
+  // 4x version: u32 - ((u32 & 0x80808080) >> 7)
+
+  for (uint8_t b = 0; b <= 189; ++b) {
+    if ((decode_byte(encode_byte(b))) != b) {
+      fprintf(stderr, "OOOPS %d\n", b);
+      __builtin_trap();
+    }
+  }
+
+  for (size_t i = 0; i < tx_buf.size(); ++i) {
+    tx_buf[i] = encode_byte(tx_buf[i] & 0x7F);
+  }
+
   constexpr unsigned int vendor = 0x0403;
   constexpr unsigned int product = 0x6014;
 
@@ -165,22 +246,6 @@ int main(int argc, char **argv) {
     }
   }
 
-  size_t cntr = 0;
-  for (size_t i = 0; i < tx_buf.size(); i += 4) {
-    if ((i & 0xF) == 0) {
-      uint32_t v = 1u << (cntr & 0x1F);
-      tx_buf[i] = v & 0xFF;
-      v >>= 8;
-      tx_buf[i + 1] = v & 0xFF;
-      v >>= 8;
-      tx_buf[i + 2] = v & 0xFF;
-      v >>= 8;
-      tx_buf[i + 3] = v & 0xFF;
-      v >>= 8;
-      cntr++;
-    }
-  }
-
   timeval timeout{0};
   int completed = 0;
 
@@ -203,9 +268,13 @@ int main(int argc, char **argv) {
       continue;
     }
     libusb_fill_bulk_transfer(transfers[i], usb_dev, /* endpoint */ 0x02,
-                              tx_buf.data() + i * CHUNK_SIZE, CHUNK_SIZE,
+                              tx_buf.data() + next_offset, CHUNK_SIZE,
                               &on_transfer_complete,
                               /* user data */ (void *)i, /* timeout */ 0);
+    next_offset += CHUNK_SIZE;
+    if (next_offset > tx_buf.size()) {
+      next_offset = 0;
+    }
   }
 
   start = std::chrono::high_resolution_clock::now();

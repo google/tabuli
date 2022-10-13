@@ -57,7 +57,10 @@ void ft1248_program_init(void) {
   // Control pins are always out.
   pio_sm_set_pindirs_with_mask(pio, sm, 3u << ss_pin, 3u << ss_pin);
 
+  //gpio_pull_up(miso_pin);
+
   for (uint32_t i = data0_pin; i <= clk_pin; ++i) {
+    //gpio_pull_up(i);
     pio_gpio_init(pio, i);
   }
 

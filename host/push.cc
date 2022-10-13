@@ -44,10 +44,39 @@ int main(int argc, char **argv) {
   struct libusb_device_handle *usb_dev = nullptr;
   int interface = 0;
 
+  const auto encode_byte = [](uint8_t b) {
+    // simple, but works well only for for 0..189
+    if (b > 189) {
+      return 0;
+    }
+    return b + ((b + 1) >> 7);
+  };
+
+  const auto decode_byte = [](uint8_t b) { return b - (b >> 7); };
+  // 4x version: u32 - ((u32 & 0x80808080) >> 7)
+
+  for (uint8_t b = 0; b <= 189; ++b) {
+    if ((decode_byte(encode_byte(b))) != b) {
+      fprintf(stderr, "OOOPS %d\n", b);
+      __builtin_trap();
+    }
+  }
+
   int tx_chunk_size = 2048 * 512; // 1MB
   std::vector<unsigned char> tx_buf(tx_chunk_size);
-  for (size_t i = 0; i < tx_chunk_size; i++) {
-    tx_buf[i] = i;
+  for (size_t i = 0; i < tx_buf.size(); i++) {
+    uint8_t result = 0;
+    size_t n = (i >> 5) & 0xFFF; // number of word in the stream
+    size_t block_offset = i & 0x1F;
+    size_t value_bit_offset = block_offset >> 1;
+    size_t branch_offset = (block_offset & 1) * 8;
+    for (size_t bit = 0; bit < 8; ++bit) {
+      size_t branch = branch_offset + bit;
+      size_t value = branch | (n << 4);
+      size_t value_bit = value >> value_bit_offset;
+      result |= value_bit << bit;
+    }
+    tx_buf[i] = encode_byte(result);
   }
 
   auto cleanup = MakeScopeGuard([&]() {
@@ -133,7 +162,8 @@ int main(int argc, char **argv) {
             LIBUSB_REQUEST_TYPE_VENDOR | LIBUSB_RECIPIENT_DEVICE |
                 LIBUSB_ENDPOINT_OUT,
             /* bRequest = SIO_RESET */ 0, /* wValue = SIO_RESET_SIO */ 0,
-            /* wIndex */ interface_index, nullptr, 0, /* timeout */ 5000) < 0) {
+            /* wIndex */ interface_index, nullptr, 0,
+            /* timeout */ 15000) < 0) {
       return 0;
     }
   }

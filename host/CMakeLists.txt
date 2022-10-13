@@ -4,7 +4,7 @@ project(piccolo-host C CXX ASM)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
 
-set(BUILD_PUSH 0)
+set(BUILD_PUSH 1)
 set(BUILD_PUSH_ASYNC 1)
 
 find_package(PkgConfig)
