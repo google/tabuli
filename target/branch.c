@@ -2,6 +2,7 @@
 #include "sound.pio.h"
 
 #include "hardware/gpio.h"
+#include "hardware/spi.h"
 #include "hardware/structs/systick.h"
 #include "hardware/vreg.h"
 #include "pico/assert.h"
@@ -298,6 +299,10 @@ void main_loop(Cookie cookie, uint16_t *sample_base);
 int main() {
   if (CPU_FREQ_MHZ != 125) {
     vreg_set_voltage(VREG_VOLTAGE_1_30);
+    // Wait until voltage is stable.
+    for (uint32_t i = 0; i < 5000000; ++i) {
+      NOP;
+    }
     set_sys_clock_khz(CPU_FREQ_MHZ * 1000, true);
     // Wait until clock is stable.
     for (uint32_t i = 0; i < 5000000; ++i) {

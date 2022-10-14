@@ -1,0 +1,20 @@
+.program pspi
+.side_set 1
+
+; OUT      : [MOSI0, ... MOSI15]
+; SIDE_SET : [SCLK], mandatory, value
+; FIFO TX-joined
+; 12-tick loop (6 low, 6 hi) to match HW slave SPI capabilities
+
+.define CLK_LO 0                       ;
+.define CLK_HI 1                       ;
+
+public entry_point:                    ;
+.wrap_target                           ;
+    pull ifempty block side CLK_LO [0] ; | can wait here
+                                       ; \---
+                                       ; /---
+    out pins, 16       side CLK_HI [5] ; |
+                                       ; >---
+    nop                side CLK_LO [4] ; |
+.wrap

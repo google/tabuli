@@ -70,7 +70,7 @@ void on_transfer_complete(struct libusb_transfer *transfer) {
       /* user data */ (void *)free_transfer, /* timeout */ 0);
   libusb_submit_transfer(transfers[free_transfer]);
   next_offset += CHUNK_SIZE;
-  if (next_offset > tx_buf.size()) {
+  if (next_offset >= tx_buf.size()) {
     next_offset = 0;
   }
 
@@ -112,6 +112,7 @@ int main(int argc, char **argv) {
             byteLen / (44100.f * 256 * 2));
   } else {
     tx_buf.resize(NUM_TRANSFERS * CHUNK_SIZE);
+    uint8_t msg[8] = {0x01, 0x23, 0x45, 0x67, 0x87, 0x65, 0x43, 0x21};
     for (size_t i = 0; i < tx_buf.size(); i++) {
       uint8_t result = 0;
       size_t n = (i >> 5) & 0xFFF; // number of word in the stream
@@ -124,7 +125,7 @@ int main(int argc, char **argv) {
         size_t value_bit = value >> value_bit_offset;
         result |= value_bit << bit;
       }
-      tx_buf[i] = result;
+      tx_buf[i] = msg[i & 7]; // result;
     }
   }
 
@@ -147,7 +148,7 @@ int main(int argc, char **argv) {
   }
 
   for (size_t i = 0; i < tx_buf.size(); ++i) {
-    tx_buf[i] = encode_byte(tx_buf[i] & 0x7F);
+    tx_buf[i] = encode_byte(tx_buf[i]);
   }
 
   constexpr unsigned int vendor = 0x0403;
@@ -272,7 +273,7 @@ int main(int argc, char **argv) {
                               &on_transfer_complete,
                               /* user data */ (void *)i, /* timeout */ 0);
     next_offset += CHUNK_SIZE;
-    if (next_offset > tx_buf.size()) {
+    if (next_offset >= tx_buf.size()) {
       next_offset = 0;
     }
   }

@@ -11,6 +11,8 @@ set(USE_DISPLAY 1)
 
 set(BUILD_STEM 1)
 set(BUILD_BRANCH 1)
+set(BUILD_TEST 1)
+
 if (USE_DISPLAY)
   set(DISPLAY_IMPLEMENTATION sd1306.c)
 else()
@@ -67,6 +69,7 @@ if (BUILD_STEM)
   pico_enable_stdio_usb(stem 0)
 
   pico_generate_pio_header(stem ${CMAKE_CURRENT_LIST_DIR}/ft1248.pio)
+  pico_generate_pio_header(stem ${CMAKE_CURRENT_LIST_DIR}/pspi.pio)
 
   pico_set_binary_type(stem copy_to_ram)
   pico_define_boot_stage2(stem-div4 ${PICO_DEFAULT_BOOT_STAGE2_FILE})
@@ -81,4 +84,26 @@ if (BUILD_STEM)
     target_link_libraries(stem hardware_i2c)
   endif()
   pico_add_extra_outputs(stem)
+endif()
+
+if (BUILD_TEST)
+  add_executable(test
+    sd1306.c
+    test.c
+  )
+
+  target_compile_definitions(test PRIVATE SD1306_I2C=i2c1)
+  target_compile_definitions(test PRIVATE SD1306_BASE_PIN=26)
+
+  pico_set_binary_type(test copy_to_ram)
+  pico_define_boot_stage2(test-div4 ${PICO_DEFAULT_BOOT_STAGE2_FILE})
+  target_compile_definitions(test-div4 PRIVATE PICO_FLASH_SPI_CLKDIV=4)
+  pico_set_boot_stage2(test test-div4)
+  target_link_libraries(test
+    hardware_i2c
+    hardware_spi
+    pico_multicore
+    pico_stdlib
+  )
+  pico_add_extra_outputs(test)
 endif()

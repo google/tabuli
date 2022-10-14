@@ -81,12 +81,17 @@ uint8_t kFont[4 * 64] = {
     0x10, 0x10, 0x10, 0  // _
 };
 
-#define I2C i2c0
-#define BASE_PIN 28
+#if !defined(SD1306_I2C)
+#define SD1306_I2C i2c0
+#endif
+
+#if !defined(SD1306_BASE_PIN)
+#define SD1306_BASE_PIN 28
+#endif
 
 uint32_t sd1306_cmd(uint8_t cmd) {
   uint8_t payload[2] = {0x00, cmd};
-  return i2c_write_blocking(I2C, DEVICE, payload, 2, false) == 2;
+  return i2c_write_blocking(SD1306_I2C, DEVICE, payload, 2, false) == 2;
 }
 
 void display_clear(void) {
@@ -102,11 +107,11 @@ void display_reinit(int full) {
 }
 
 void display_init(void) {
-  i2c_init(I2C, 1700000);
-  gpio_set_function(BASE_PIN, GPIO_FUNC_I2C);
-  gpio_set_function(BASE_PIN + 1, GPIO_FUNC_I2C);
-  gpio_pull_up(BASE_PIN);
-  gpio_pull_up(BASE_PIN + 1);
+  i2c_init(SD1306_I2C, 1700000);
+  gpio_set_function(SD1306_BASE_PIN, GPIO_FUNC_I2C);
+  gpio_set_function(SD1306_BASE_PIN + 1, GPIO_FUNC_I2C);
+  gpio_pull_up(SD1306_BASE_PIN);
+  gpio_pull_up(SD1306_BASE_PIN + 1);
   display_reinit(1);
   screen[0] = 0x40;
   display_clear();
@@ -143,5 +148,5 @@ void display_flush(void) {
   for (uint32_t i = 0; i < 6; ++i) {
     sd1306_cmd(payload[i]);
   }
-  i2c_write_blocking(I2C, DEVICE, screen, SCREEN_LEN, false);
+  i2c_write_blocking(SD1306_I2C, DEVICE, screen, SCREEN_LEN, false);
 }
