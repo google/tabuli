@@ -111,8 +111,8 @@ int main(int argc, char **argv) {
     fprintf(stderr, "Estimated sample len: %0.3fs\n",
             byteLen / (44100.f * 256 * 2));
   } else {
-    tx_buf.resize(NUM_TRANSFERS * CHUNK_SIZE);
-    uint8_t msg[8] = {0x01, 0x23, 0x45, 0x67, 0x87, 0x65, 0x43, 0x21};
+    tx_buf.resize(4096 * CHUNK_SIZE);
+    uint8_t msg[8] = {0x01, 0x23, 0x45, 0x67, 0x76, 0x54, 0x32, 0x10};
     for (size_t i = 0; i < tx_buf.size(); i++) {
       uint8_t result = 0;
       size_t n = (i >> 5) & 0xFFF; // number of word in the stream
@@ -125,7 +125,9 @@ int main(int argc, char **argv) {
         size_t value_bit = value >> value_bit_offset;
         result |= value_bit << bit;
       }
-      tx_buf[i] = msg[i & 7]; // result;
+      // tx_buf[i] = rand();
+      // tx_buf[i] = msg[i & 7];
+      tx_buf[i] = result;
     }
   }
 
@@ -148,7 +150,7 @@ int main(int argc, char **argv) {
   }
 
   for (size_t i = 0; i < tx_buf.size(); ++i) {
-    tx_buf[i] = encode_byte(tx_buf[i]);
+    tx_buf[i] = encode_byte(tx_buf[i] & 0x7F);
   }
 
   constexpr unsigned int vendor = 0x0403;

@@ -11,24 +11,37 @@
 .define CLK_LO 0                   ; SS_N = 0, CLK = 0
 .define CLK_HI 2                   ; SS_N = 0, CLK = 1
 
-public entry_point:                ; start of program
-reset:                             ; /---
-    mov osr, !null side RESET  [6] ; | fill OSR with ones
-                                   ; \---
-                                   ; /---
-    out pindirs, 8 side CLK_HI [6] ; | switch to output to send command
-                                   ; | values are considered to be already set
-    mov osr, null  side CLK_LO [6] ; | fill OSR with zeroes
-                                   ; \---
-                                   ; /---
-    out pindirs, 8 side CLK_HI [6] ; | bus turnaround
-    nop            side CLK_LO [4] ; | take into account input latency
-    jmp pin reset  side CLK_LO [1] ; | RXF# is up, start the process over
-                                   ; \---
-.wrap_target                       ; /---
-    nop            side CLK_HI [6] ; |
-    nop            side CLK_LO [4] ; | take into account input latency
-    jmp pin reset  side CLK_LO [0] ; | got NAK? start the process over
-    in pins, 8     side CLK_LO [0] ; | read data
-.wrap                              ; | zero-cost jump
-                                   ; \---
+unwind:
+    nop            side CLK_LO [3] ; end of hot loop
+public entry_point:
+reset:
+    mov osr, !null side RESET  [3] ;
+w_fifo:
+    mov x, status  side RESET  [0] ;
+    jmp !x w_fifo  side RESET  [0] ;
+w_data:
+    jmp pin cmd    side RESET  [0] ;
+    jmp w_data     side RESET  [0] ;
+                                   ;
+cmd:
+    nop            side CLK_LO [3] ; Clearance between select and first clk
+
+    out pindirs, 8 side CLK_HI [7] ; Bus turnaround, values are already set
+    nop            side CLK_HI [1] ;
+    mov osr, null  side CLK_LO [2] ;
+    out pindirs, 8 side CLK_LO [0] ; Bus turnaround, just before the next clk
+
+    nop            side CLK_HI [7] ;
+    nop            side CLK_HI [0] ;
+    jmp pin unwind side CLK_HI [0] ; RXF# is up, start the process over
+    nop            side CLK_LO [4] ;
+
+.wrap_target
+    nop            side CLK_HI [7] ;
+    nop            side CLK_HI [0] ;
+    jmp pin unwind side CLK_HI [0] ;
+    nop            side CLK_LO [0] ;
+    in pins, 8     side CLK_LO [0] ;
+    mov x, status  side CLK_LO [0] ; Less than 8 items in FIFO
+    jmp !x reset   side CLK_LO [0] ; If FIFO is full, exit the hot loop
+.wrap
