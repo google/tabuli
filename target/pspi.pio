@@ -1,20 +1,30 @@
 .program pspi
-.side_set 1
+.side_set 2
 
 ; OUT      : [MOSI0, ... MOSI15]
-; SIDE_SET : [SCLK], mandatory, value
+; SIDE_SET : [RESET, SCLK], mandatory, value
 ; FIFO TX-joined
-; 12-tick loop (6 low, 6 hi) to match HW slave SPI capabilities
+; 14-tick loop (7 low, 7 hi)
 
-.define CLK_LO 0                       ;
-.define CLK_HI 1                       ;
+.define CLK_LO 0                        ; CS = 0, SCLK = 0
+.define CLK_HI 2                        ; CS = 0, SCLK = 1
+.define RESET_HI 1                      ; CS = 1, SCLK = 1
+.define RESET_LO 1                      ; CS = 1, SCLK = 0
 
-public entry_point:                    ;
-.wrap_target                           ;
-    pull ifempty block side CLK_LO [0] ; | can wait here
-                                       ; \---
-                                       ; /---
-    out pins, 16       side CLK_HI [5] ; |
-                                       ; >---
-    nop                side CLK_LO [4] ; |
+tock:
+    nop             side RESET_LO  [6] ; extra delay to retain pace
+
+public entry_point:
+.wrap_target
+    set x, 15       side RESET_HI  [4] ; make sure RESET is at least 6 ticks
+    mov y, status   side RESET_HI  [0] ; wait until FIFO is full
+    jmp y-- tock    side RESET_HI  [0] ; 8 x 32 = 16 x 16
+
+    nop             side CLK_LO [1] ; half period wait (CPHA = 1)
+                                    ; loop is do-while -> one off
+loop:
+    out pins, 16    side CLK_LO [4] ;
+    nop             side CLK_HI [6] ;
+    jmp x-- loop    side CLK_LO [1] ;
+    nop             side CLK_LO [4] ;
 .wrap

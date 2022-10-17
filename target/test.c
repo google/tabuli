@@ -70,20 +70,21 @@ void core0_main() {
     }
   }
 
-  uint32_t iter = 0;
+  uint32_t iter = 0xFFFFFFFF;
   uint32_t errors = 0;
   uint32_t bytes = 0;
   while (!multicore_fifo_rvalid()) {
     NOP;
   }
 
-  spi_init(spi0, (CPU_FREQ_KHZ / 12) * 1000);
+  spi_init(spi0, CPU_FREQ_MHZ / 2);
   spi_set_slave(spi0, true);
   gpio_set_function(0, GPIO_FUNC_SPI); // RX
   gpio_set_function(1, GPIO_FUNC_SPI); // CSn
   gpio_set_function(2, GPIO_FUNC_SPI); // SCK
   gpio_set_function(3, GPIO_FUNC_SPI); // TX
 
+  // It is not possible to have LSB_FIRST
   spi_set_format(spi0, 16, SPI_CPOL_0, SPI_CPHA_1, SPI_MSB_FIRST);
 
   spi_hw_t *spi_hw = spi_get_hw(spi0);
@@ -95,9 +96,14 @@ void core0_main() {
         spi_status = spi_hw->sr;
         continue;
       }
+
       if (spi_status & SPI_SSPSR_RNE_BITS) {
         //*dst++ = (uint8_t) spi_get_hw(spi)->dr;
-        iter = spi_hw->dr; // (iter << 16) | (spi_hw->dr & 0xFFFF);
+        uint32_t val = spi_hw->dr;
+        if (val != 0xCAFE) {
+          iter = val;
+          errors++;
+        }
         bytes++;
         spi_status = spi_hw->sr;
         continue;
@@ -109,7 +115,7 @@ void core0_main() {
 #if USE_DISPLAY
     if (multicore_fifo_rvalid()) {
       (void)multicore_fifo_pop_blocking();
-      errors++;
+      //errors++;
       multicore_fifo_push_blocking(iter);
       multicore_fifo_push_blocking(errors);
       multicore_fifo_push_blocking(bytes);

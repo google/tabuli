@@ -121,8 +121,9 @@ int main(int argc, char **argv) {
       size_t branch_offset = (block_offset & 1) * 8;
       for (size_t bit = 0; bit < 8; ++bit) {
         size_t branch = branch_offset + bit;
-        size_t value = branch | (n << 4);
-        size_t value_bit = value >> value_bit_offset;
+        uint16_t value = 0xCA80;// | (n << 4);
+        //value = (value >> 8) | (value << 8); // swap bytes
+        size_t value_bit = value >> (15 - value_bit_offset); // reverse bits
         result |= value_bit << bit;
       }
       // tx_buf[i] = rand();

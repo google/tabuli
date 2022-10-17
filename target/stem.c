@@ -24,10 +24,10 @@
 static uint32_t ring_buffer[RING_BUFFER_SIZE];
 
 void init_pio(void) {
-  PIO pio = pio0;
-  pio_clear_instruction_memory(pio);
-  uint32_t ft1248_offset = pio_add_program(pio, &ft1248_program);
-  uint32_t pspi_offset = pio_add_program(pio, &pspi_program);
+  pio_clear_instruction_memory(pio0);
+  uint32_t ft1248_offset = pio_add_program(pio0, &ft1248_program);
+  pio_clear_instruction_memory(pio1);
+  uint32_t pspi_offset = pio_add_program(pio1, &pspi_program);
 
   uint32_t pull_sm = 0;
 
@@ -57,51 +57,56 @@ void init_pio(void) {
   sm_config_set_mov_status(&pull_c, STATUS_RX_LESSTHAN, 7);
 
   // Setup read command.
-  pio_sm_set_pins_with_mask(pio, pull_sm, 0x40u << data0_pin,
+  pio_sm_set_pins_with_mask(pio0, pull_sm, 0x40u << data0_pin,
                             0xFF << data0_pin);
   // All data pins are in by default.
-  // TODO: pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, true);
-  pio_sm_set_pindirs_with_mask(pio, pull_sm, 0, 0xFFu << data0_pin);
+  // TODO: pio_sm_set_consecutive_pindirs(pio0, sm, pin, 1, true);
+  pio_sm_set_pindirs_with_mask(pio0, pull_sm, 0, 0xFFu << data0_pin);
 
   // MISO is always in.
-  pio_sm_set_pindirs_with_mask(pio, pull_sm, 0, 1u << miso_pin);
+  pio_sm_set_pindirs_with_mask(pio0, pull_sm, 0, 1u << miso_pin);
 
   // Setup idle device state: SS_N high, CLK low.
-  pio_sm_set_pins_with_mask(pio, pull_sm, 1u << ss_pin, 3u << ss_pin);
+  pio_sm_set_pins_with_mask(pio0, pull_sm, 1u << ss_pin, 3u << ss_pin);
   // Control pins are always out.
-  pio_sm_set_pindirs_with_mask(pio, pull_sm, 3u << ss_pin, 3u << ss_pin);
+  pio_sm_set_pindirs_with_mask(pio0, pull_sm, 3u << ss_pin, 3u << ss_pin);
 
   //----------------------------------------------------------------------------
 
   uint32_t push_sm = 1;
-  const uint32_t sclk_pin = 11;
-  const uint32_t mosi0_pin = 12;
-  const uint32_t mosi15_pin = mosi0_pin + 15;
+  const uint32_t num_mosi_pin = 15;
+  const uint32_t cs_pin = 11;
+  const uint32_t sclk_pin = 12;
+  const uint32_t mosi0_pin = 13;
+  const uint32_t mosi_last_pin = mosi0_pin + num_mosi_pin - 1;
   pio_sm_config push_c = pio_get_default_sm_config();
 
-  sm_config_set_out_pins(&push_c, mosi0_pin, 16);
+  sm_config_set_out_pins(&push_c, mosi0_pin, num_mosi_pin);
   // sm_config_set_in_pins(&push_c, data0_pin);
-  sm_config_set_sideset_pins(&push_c, sclk_pin);
-  sm_config_set_sideset(&push_c, 1, false, false);
-  sm_config_set_clkdiv_int_frac(&push_c, /* div_int */ 1, /* div_frac */ 0);
+  sm_config_set_sideset_pins(&push_c, cs_pin);
+  sm_config_set_sideset(&push_c, 2, false, false);
+  sm_config_set_clkdiv_int_frac(&push_c, /* div_int */ 2, /* div_frac */ 0);
   sm_config_set_wrap(&push_c, pspi_offset + pspi_wrap_target,
                      pspi_offset + pspi_wrap);
   // sm_config_set_jmp_pin(&push_c, miso_pin);
   // sm_config_set_in_shift(&push_c, /* shift_right */ true, /* autopush */
   // true, /* push threshold */ 32);
-  sm_config_set_out_shift(&push_c, /* shift_right */ true, /* autopull */ false,
+  sm_config_set_out_shift(&push_c, /* shift_right */ true, /* autopull */ true,
                           /* pull_threshold */ 32);
   sm_config_set_fifo_join(&push_c, PIO_FIFO_JOIN_TX);
   // sm_config_set_out_special(&c, sticky, has_enable_pin, enable_pin_index);
-  // sm_config_set_mov_status(&push_c, STATUS_TX_LESSTHAN, 1);
+  sm_config_set_mov_status(&push_c, STATUS_TX_LESSTHAN, 8);
 
   // All mosi pins are out.
-  pio_sm_set_pins_with_mask(pio, push_sm, 0, 0xFFFF << mosi0_pin);
-  pio_sm_set_pindirs_with_mask(pio, push_sm, 0xFFFF << mosi0_pin,
-                               0xFFFF << mosi0_pin);
-  // SCLK is out as well.
-  pio_sm_set_pins_with_mask(pio, push_sm, 0, 1 << sclk_pin);
-  pio_sm_set_pindirs_with_mask(pio, push_sm, 1 << sclk_pin, 1 << sclk_pin);
+  uint32_t mosi_mask = ((1 << num_mosi_pin) - 1);
+  pio_sm_set_pins_with_mask(pio1, push_sm, 0, mosi_mask << mosi0_pin);
+  pio_sm_set_pindirs_with_mask(pio1, push_sm, mosi_mask << mosi0_pin,
+                               mosi_mask << mosi0_pin);
+  // CS and SCLK are out as well.
+  pio_sm_set_pins_with_mask(pio1, push_sm, 1 << cs_pin, 1 << cs_pin);
+  pio_sm_set_pins_with_mask(pio1, push_sm, 0, 1 << sclk_pin);
+  pio_sm_set_pindirs_with_mask(pio1, push_sm, 1 << sclk_pin, 1 << sclk_pin);
+  pio_sm_set_pindirs_with_mask(pio1, push_sm, 1 << cs_pin, 1 << cs_pin);
 
   //----------------------------------------------------------------------------
 
@@ -111,18 +116,18 @@ void init_pio(void) {
   for (uint32_t i = data0_pin; i <= clk_pin; ++i) {
     gpio_pull_up(i);
     gpio_set_input_hysteresis_enabled(i, false);
-    pio_gpio_init(pio, i);
+    pio_gpio_init(pio0, i);
   }
 
-  for (uint32_t i = sclk_pin; i <= sclk_pin; ++i) {
-    pio_gpio_init(pio, i);
+  for (uint32_t i = cs_pin; i <= sclk_pin; ++i) {
+    pio_gpio_init(pio1, i);
   }
-  for (uint32_t i = mosi0_pin; i <= mosi15_pin; ++i) {
-    pio_gpio_init(pio, i);
+  for (uint32_t i = mosi0_pin; i <= mosi_last_pin; ++i) {
+    pio_gpio_init(pio1, i);
   }
 
-  pio_sm_init(pio, pull_sm, ft1248_offset + ft1248_offset_entry_point, &pull_c);
-  pio_sm_init(pio, push_sm, pspi_offset + pspi_offset_entry_point, &push_c);
+  pio_sm_init(pio0, pull_sm, ft1248_offset + ft1248_offset_entry_point, &pull_c);
+  pio_sm_init(pio1, push_sm, pspi_offset + pspi_offset_entry_point, &push_c);
 }
 
 static void print_hex(char *out, uint32_t value) {
@@ -178,7 +183,6 @@ void core0_main() {
     }
   }
 
-  PIO pio = pio0;
   uint32_t pull_sm = 0;
   uint32_t push_sm = 1;
 
@@ -189,12 +193,20 @@ void core0_main() {
     NOP;
   }
 
-  pio_sm_set_enabled(pio, pull_sm, true);
-  pio_sm_set_enabled(pio, push_sm, true);
+  pio_sm_set_enabled(pio0, pull_sm, true);
+  pio_sm_set_enabled(pio1, push_sm, true);
 
   // Each item is 2 bits x 16 channel;
   // bundle 8 of them for word-oriented transfer.
 #define BUNDLE_LEN 8
+
+  uint32_t text[BUNDLE_LEN] = {0};
+  for (uint32_t i = 0; i < 16; ++i) {
+    uint32_t bit = (0xCAFE >> (15 - i)) & 1;
+    uint32_t shift = (i & 1) * 16;
+    bit = bit ? 0xFFFF << shift : 0;
+    text[i >> 1] |= bit;
+  }
 
   // bytes per second: 22579200 = 44100*256*2
   // items per second: 5644800 = 22579200 / 4
@@ -212,14 +224,16 @@ void core0_main() {
   uint32_t write_pos = 0;
   uint64_t next_tick = time_us_64() + tick_step;
   uint32_t lag = RING_BUFFER_SIZE - 4096;
+#define MY_SPI 1
+  uint32_t next_spi = 0;
 
   uint32_t num_restarts = 0;
 
   while (1) {
     // Pull just one.
     while ((write_pos < read_pos + lag) &&
-           !pio_sm_is_rx_fifo_empty(pio, pull_sm)) {
-      uint32_t encoded = pio_sm_get(pio, pull_sm);
+           !pio_sm_is_rx_fifo_empty(pio0, pull_sm)) {
+      uint32_t encoded = pio_sm_get(pio0, pull_sm);
       uint32_t decoded = encoded - ((encoded >> 7) & 0x01010101);
       ring_buffer[write_pos++ & RING_BUFFER_MASK] = decoded;
     }
@@ -243,9 +257,13 @@ void core0_main() {
       }
     }
     // Push as many as possible.
-    if (read_pos < read_pos_target) {
-      while (!pio_sm_is_tx_fifo_full(pio, push_sm)) {
-        pio_sm_put(pio, push_sm, ring_buffer[read_pos++ & RING_BUFFER_MASK]);
+    if ((read_pos < read_pos_target) || MY_SPI) {
+      while (!pio_sm_is_tx_fifo_full(pio1, push_sm)) {
+#if MY_SPI
+        pio_sm_put(pio1, push_sm, text[next_spi++ & 0x7]);
+#else
+        pio_sm_put(pio1, push_sm, ring_buffer[read_pos++ & RING_BUFFER_MASK]);
+#endif
       }
     }
     // If next read is after next write -> last read was at or after next write.
@@ -286,20 +304,21 @@ void core1_start() {
 int main() {
   init_pio();
 
+  gpio_init(25);
+  gpio_set_dir(25, GPIO_OUT);
+#define FLASH gpio_put(25, 1); sleep_ms(100); gpio_put(25, 0); sleep_ms(100);
+
   if (CPU_FREQ_MHZ != 125) {
     vreg_set_voltage(VREG_VOLTAGE_1_30);
     // Wait until voltage is stable.
-    for (uint32_t i = 0; i < 5000000; ++i) {
-      NOP;
-    }
+    FLASH;
     set_sys_clock_khz(CPU_FREQ_MHZ * 1000, true);
     // Wait until clock is stable.
-    for (uint32_t i = 0; i < 5000000; ++i) {
-      NOP;
-    }
+    FLASH;
     clock_configure(clk_peri, 0,
                     CLOCKS_CLK_PERI_CTRL_AUXSRC_VALUE_CLKSRC_PLL_SYS,
                     CPU_FREQ_KHZ * 1000, CPU_FREQ_KHZ * 1000);
+    FLASH;
   }
 
 #if USE_DISPLAY
