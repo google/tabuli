@@ -16,15 +16,18 @@ tock:
 
 public entry_point:
 .wrap_target
-    set x, 15       side RESET_HI  [4] ; make sure RESET is at least 6 ticks
+    set x, 7        side RESET_HI  [4] ; make sure RESET is at least 6 ticks
     mov y, status   side RESET_HI  [0] ; wait until FIFO is full
     jmp y-- tock    side RESET_HI  [0] ; 8 x 32 = 16 x 16
 
-    nop             side CLK_LO [1] ; half period wait (CPHA = 1)
-                                    ; loop is do-while -> one off
+    nop             side CLK_LO [0] ;
 loop:
+    pull            side CLK_LO [0] ;
     out pins, 16    side CLK_LO [4] ;
     nop             side CLK_HI [6] ;
-    jmp x-- loop    side CLK_LO [1] ;
-    nop             side CLK_LO [4] ;
+    nop             side CLK_LO [1] ;
+    out pins, 16    side CLK_LO [4] ;
+    nop             side CLK_HI [6] ;
+    jmp x-- loop    side CLK_LO [0] ;
+    nop             side CLK_LO [5] ;
 .wrap

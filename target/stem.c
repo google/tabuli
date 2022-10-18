@@ -42,7 +42,7 @@ void init_pio(void) {
 
   sm_config_set_out_pins(&pull_c, data0_pin, 8);
   sm_config_set_in_pins(&pull_c, data0_pin);
-  //sm_config_set_in_pins(&pull_c, miso_pin);
+  // sm_config_set_in_pins(&pull_c, miso_pin);
   sm_config_set_sideset_pins(&pull_c, ss_pin);
   sm_config_set_sideset(&pull_c, 2, false, false);
   sm_config_set_clkdiv_int_frac(&pull_c, /* div_int */ 1, /* div_frac */ 0);
@@ -51,7 +51,8 @@ void init_pio(void) {
   sm_config_set_jmp_pin(&pull_c, miso_pin);
   sm_config_set_in_shift(&pull_c, /* shift_right */ false, /* autopush */ true,
                          /* push threshold */ 32);
-  sm_config_set_out_shift(&pull_c, /* shift_right */ true, /* autopull */ false, /* pull_threshold */ 32);
+  sm_config_set_out_shift(&pull_c, /* shift_right */ true, /* autopull */ false,
+                          /* pull_threshold */ 32);
   sm_config_set_fifo_join(&pull_c, PIO_FIFO_JOIN_RX);
   // sm_config_set_out_special(&c, sticky, has_enable_pin, enable_pin_index);
   sm_config_set_mov_status(&pull_c, STATUS_RX_LESSTHAN, 7);
@@ -91,7 +92,7 @@ void init_pio(void) {
   // sm_config_set_jmp_pin(&push_c, miso_pin);
   // sm_config_set_in_shift(&push_c, /* shift_right */ true, /* autopush */
   // true, /* push threshold */ 32);
-  sm_config_set_out_shift(&push_c, /* shift_right */ true, /* autopull */ true,
+  sm_config_set_out_shift(&push_c, /* shift_right */ true, /* autopull */ false,
                           /* pull_threshold */ 32);
   sm_config_set_fifo_join(&push_c, PIO_FIFO_JOIN_TX);
   // sm_config_set_out_special(&c, sticky, has_enable_pin, enable_pin_index);
@@ -126,7 +127,8 @@ void init_pio(void) {
     pio_gpio_init(pio1, i);
   }
 
-  pio_sm_init(pio0, pull_sm, ft1248_offset + ft1248_offset_entry_point, &pull_c);
+  pio_sm_init(pio0, pull_sm, ft1248_offset + ft1248_offset_entry_point,
+              &pull_c);
   pio_sm_init(pio1, push_sm, pspi_offset + pspi_offset_entry_point, &push_c);
 }
 
@@ -207,6 +209,9 @@ void core0_main() {
     bit = bit ? 0xFFFF << shift : 0;
     text[i >> 1] |= bit;
   }
+  for (uint32_t i = 0; i < BUNDLE_LEN; ++i) {
+    text[i] &= 0x7F7F7F7F;
+  }
 
   // bytes per second: 22579200 = 44100*256*2
   // items per second: 5644800 = 22579200 / 4
@@ -241,7 +246,6 @@ void core0_main() {
     if (time_us_64() >= next_tick) {
       if (write_pos == 0) { // Still waiting for input.
         next_tick = time_us_64() + (tick_step / 2);
-        num_restarts++;
       } else {
         if (read_pos != read_pos_target) {
           // Ooops, previous transfer is incomplete
@@ -256,14 +260,28 @@ void core0_main() {
         next_tick += tick_step;
       }
     }
-    // Push as many as possible.
-    if ((read_pos < read_pos_target) || MY_SPI) {
-      while (!pio_sm_is_tx_fifo_full(pio1, push_sm)) {
+
 #if MY_SPI
-        pio_sm_put(pio1, push_sm, text[next_spi++ & 0x7]);
+#define PUSH                                                                   \
+  pio_sm_put(pio1, push_sm, text[next_spi++ & 0x7]);                           \
+  read_pos++;
 #else
-        pio_sm_put(pio1, push_sm, ring_buffer[read_pos++ & RING_BUFFER_MASK]);
+#define PUSH                                                                   \
+  pio_sm_put(pio1, push_sm, ring_buffer[read_pos++ & RING_BUFFER_MASK]);
 #endif
+    // Push as many as possible.
+    errors = (errors << 4) | pio_sm_get_tx_fifo_level(pio1, push_sm);
+    if ((read_pos < read_pos_target) && (pio_sm_get_tx_fifo_level(pio1, push_sm) <= 3)) {
+      PUSH;
+      PUSH;
+      PUSH;
+      PUSH;
+      PUSH;
+      for (uint32_t i = 0; i < 3; ++i) {
+        while (pio_sm_is_tx_fifo_full(pio1, push_sm)) {
+          // no-op
+        }
+        PUSH;
       }
     }
     // If next read is after next write -> last read was at or after next write.
@@ -280,8 +298,8 @@ void core0_main() {
     if (multicore_fifo_rvalid()) {
       (void)multicore_fifo_pop_blocking();
       multicore_fifo_push_blocking(read_pos);
+      multicore_fifo_push_blocking(read_pos_target - read_pos);
       multicore_fifo_push_blocking(write_pos - read_pos);
-      multicore_fifo_push_blocking(num_restarts);
     }
 #endif
   }
@@ -306,7 +324,11 @@ int main() {
 
   gpio_init(25);
   gpio_set_dir(25, GPIO_OUT);
-#define FLASH gpio_put(25, 1); sleep_ms(100); gpio_put(25, 0); sleep_ms(100);
+#define FLASH                                                                  \
+  gpio_put(25, 1);                                                             \
+  sleep_ms(100);                                                               \
+  gpio_put(25, 0);                                                             \
+  sleep_ms(100);
 
   if (CPU_FREQ_MHZ != 125) {
     vreg_set_voltage(VREG_VOLTAGE_1_30);

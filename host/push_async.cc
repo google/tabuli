@@ -104,6 +104,7 @@ void readFile(const char *fname, std::vector<unsigned char> *out) {
 } // namespace
 
 int main(int argc, char **argv) {
+
   if (argc == 2) {
     fprintf(stderr, "Loading input file: %s\n", argv[1]);
     readFile(argv[1], &tx_buf);
@@ -121,14 +122,15 @@ int main(int argc, char **argv) {
       size_t branch_offset = (block_offset & 1) * 8;
       for (size_t bit = 0; bit < 8; ++bit) {
         size_t branch = branch_offset + bit;
-        uint16_t value = 0xCA80;// | (n << 4);
+        uint16_t value = 0xCAFE;// | (n << 4);
         //value = (value >> 8) | (value << 8); // swap bytes
         size_t value_bit = value >> (15 - value_bit_offset); // reverse bits
         result |= value_bit << bit;
       }
       // tx_buf[i] = rand();
       // tx_buf[i] = msg[i & 7];
-      tx_buf[i] = result;
+      // tx_buf[i] = result;
+      tx_buf[i] = ((0xCAFE >> (15 - ((i & 0x1F) / 2))) & 1) ? 0xFF : 0;
     }
   }
 
