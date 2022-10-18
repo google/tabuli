@@ -77,7 +77,7 @@ void core0_main() {
     NOP;
   }
 
-  spi_init(spi0, CPU_FREQ_MHZ / 2);
+  spi_init(spi0, CPU_FREQ_MHZ / 14);
   spi_set_slave(spi0, true);
   gpio_set_function(0, GPIO_FUNC_SPI); // RX
   gpio_set_function(1, GPIO_FUNC_SPI); // CSn

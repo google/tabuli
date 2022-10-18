@@ -49,7 +49,7 @@ void init_pio(void) {
   sm_config_set_wrap(&pull_c, ft1248_offset + ft1248_wrap_target,
                      ft1248_offset + ft1248_wrap);
   sm_config_set_jmp_pin(&pull_c, miso_pin);
-  sm_config_set_in_shift(&pull_c, /* shift_right */ false, /* autopush */ true,
+  sm_config_set_in_shift(&pull_c, /* shift_right */ true, /* autopush */ true,
                          /* push threshold */ 32);
   sm_config_set_out_shift(&pull_c, /* shift_right */ true, /* autopull */ false,
                           /* pull_threshold */ 32);
@@ -127,6 +127,10 @@ void init_pio(void) {
     pio_gpio_init(pio1, i);
   }
 
+  for (uint32_t i = cs_pin; i <= mosi0_pin; ++i) {
+    gpio_set_drive_strength(i, GPIO_DRIVE_STRENGTH_2MA);
+  }
+
   pio_sm_init(pio0, pull_sm, ft1248_offset + ft1248_offset_entry_point,
               &pull_c);
   pio_sm_init(pio1, push_sm, pspi_offset + pspi_offset_entry_point, &push_c);
@@ -202,17 +206,6 @@ void core0_main() {
   // bundle 8 of them for word-oriented transfer.
 #define BUNDLE_LEN 8
 
-  uint32_t text[BUNDLE_LEN] = {0};
-  for (uint32_t i = 0; i < 16; ++i) {
-    uint32_t bit = (0xCAFE >> (15 - i)) & 1;
-    uint32_t shift = (i & 1) * 16;
-    bit = bit ? 0xFFFF << shift : 0;
-    text[i >> 1] |= bit;
-  }
-  for (uint32_t i = 0; i < BUNDLE_LEN; ++i) {
-    text[i] &= 0x7F7F7F7F;
-  }
-
   // bytes per second: 22579200 = 44100*256*2
   // items per second: 5644800 = 22579200 / 4
   // bundles per second: 705600 = 5644800 / 8
@@ -229,7 +222,7 @@ void core0_main() {
   uint32_t write_pos = 0;
   uint64_t next_tick = time_us_64() + tick_step;
   uint32_t lag = RING_BUFFER_SIZE - 4096;
-#define MY_SPI 1
+#define MY_SPI 0
   uint32_t next_spi = 0;
 
   uint32_t num_restarts = 0;
@@ -270,8 +263,9 @@ void core0_main() {
   pio_sm_put(pio1, push_sm, ring_buffer[read_pos++ & RING_BUFFER_MASK]);
 #endif
     // Push as many as possible.
-    errors = (errors << 4) | pio_sm_get_tx_fifo_level(pio1, push_sm);
-    if ((read_pos < read_pos_target) && (pio_sm_get_tx_fifo_level(pio1, push_sm) <= 3)) {
+    //errors = (errors << 4) | pio_sm_get_tx_fifo_level(pio1, push_sm);
+    if ((read_pos < read_pos_target) &&
+        (pio_sm_get_tx_fifo_level(pio1, push_sm) <= 3)) {
       PUSH;
       PUSH;
       PUSH;
@@ -299,7 +293,8 @@ void core0_main() {
       (void)multicore_fifo_pop_blocking();
       multicore_fifo_push_blocking(read_pos);
       multicore_fifo_push_blocking(read_pos_target - read_pos);
-      multicore_fifo_push_blocking(write_pos - read_pos);
+      //multicore_fifo_push_blocking(write_pos - read_pos);
+      multicore_fifo_push_blocking(errors);
     }
 #endif
   }
@@ -342,6 +337,8 @@ int main() {
                     CPU_FREQ_KHZ * 1000, CPU_FREQ_KHZ * 1000);
     FLASH;
   }
+#undef FLASH
+  pio_gpio_init(pio1, 25);
 
 #if USE_DISPLAY
   multicore_launch_core1(core1_start);
