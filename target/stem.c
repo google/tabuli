@@ -1,8 +1,8 @@
 #include "display.h"
-
 #include "ft1248.pio.h"
 #include "hardware/clocks.h"
 #include "hardware/gpio.h"
+#include "hardware/structs/bus_ctrl.h"
 #include "hardware/vreg.h"
 #include "pico/multicore.h"
 #include "pico/stdlib.h"
@@ -19,9 +19,24 @@
 #define CPU_FREQ_MHZ 420
 #define CPU_FREQ_KHZ (CPU_FREQ_MHZ * 1000)
 
+uint32_t kCore0Ready = 0xFEEDBAC0;
+uint32_t kCore1Ready = 0xFEEDBAC1;
+
 #define RING_BUFFER_SIZE 0x8000
 #define RING_BUFFER_MASK (RING_BUFFER_SIZE - 1)
 static uint32_t ring_buffer[RING_BUFFER_SIZE];
+
+void init_flash(void) {
+  gpio_init(25);
+  gpio_set_dir(25, GPIO_OUT);
+}
+
+void flash(void) {
+  gpio_put(25, 1);
+  sleep_ms(100);
+  gpio_put(25, 0);
+  sleep_ms(100);
+}
 
 void init_pio(void) {
   pio_clear_instruction_memory(pio0);
@@ -144,7 +159,7 @@ static void print_hex(char *out, uint32_t value) {
   }
 }
 
-void core1_main() {
+void core1_main(void) {
   display_init();
   display_print(0, 0, "DEAD");
   display_print(4, 6, "BEEF");
@@ -182,7 +197,7 @@ void core1_main() {
   }
 }
 
-void core0_main() {
+void core0_main(void) {
   if (CPU_FREQ_MHZ != 125) {
     for (uint32_t i = 0; i < 20 * 1000 * 1000; ++i) {
       NOP;
@@ -263,7 +278,7 @@ void core0_main() {
   pio_sm_put(pio1, push_sm, ring_buffer[read_pos++ & RING_BUFFER_MASK]);
 #endif
     // Push as many as possible.
-    //errors = (errors << 4) | pio_sm_get_tx_fifo_level(pio1, push_sm);
+    // errors = (errors << 4) | pio_sm_get_tx_fifo_level(pio1, push_sm);
     if ((read_pos < read_pos_target) &&
         (pio_sm_get_tx_fifo_level(pio1, push_sm) <= 3)) {
       PUSH;
@@ -293,17 +308,14 @@ void core0_main() {
       (void)multicore_fifo_pop_blocking();
       multicore_fifo_push_blocking(read_pos);
       multicore_fifo_push_blocking(read_pos_target - read_pos);
-      //multicore_fifo_push_blocking(write_pos - read_pos);
+      // multicore_fifo_push_blocking(write_pos - read_pos);
       multicore_fifo_push_blocking(errors);
     }
 #endif
   }
 }
 
-uint32_t kCore0Ready = 0xFEEDBAC0;
-uint32_t kCore1Ready = 0xFEEDBAC1;
-
-void core1_start() {
+void core1_start(void) {
   uint32_t test = multicore_fifo_pop_blocking();
   if (test == kCore0Ready) {
     multicore_fifo_push_blocking(kCore1Ready);
@@ -314,31 +326,32 @@ void core1_start() {
   }
 }
 
-int main() {
-  init_pio();
+int main(void) {
+  init_flash();
 
-  gpio_init(25);
-  gpio_set_dir(25, GPIO_OUT);
-#define FLASH                                                                  \
-  gpio_put(25, 1);                                                             \
-  sleep_ms(100);                                                               \
-  gpio_put(25, 0);                                                             \
-  sleep_ms(100);
+  // Make core0 the only high-priority master; this way is never stalled by
+  // memory access arbitration.
+  //                       CPU_0      CPU_1      DMA_R      DMA_W
+  bus_ctrl_hw->priority = (1 << 0) | (0 << 4) | (0 << 8) | (0 << 12);
+  while (!bus_ctrl_hw->priority_ack) {
+    // no-op
+  }
 
   if (CPU_FREQ_MHZ != 125) {
     vreg_set_voltage(VREG_VOLTAGE_1_30);
     // Wait until voltage is stable.
-    FLASH;
+    flash();
     set_sys_clock_khz(CPU_FREQ_MHZ * 1000, true);
     // Wait until clock is stable.
-    FLASH;
+    flash();
     clock_configure(clk_peri, 0,
                     CLOCKS_CLK_PERI_CTRL_AUXSRC_VALUE_CLKSRC_PLL_SYS,
                     CPU_FREQ_KHZ * 1000, CPU_FREQ_KHZ * 1000);
-    FLASH;
+    flash();
   }
-#undef FLASH
-  pio_gpio_init(pio1, 25);
+
+  // Deinits flash.
+  init_pio();
 
 #if USE_DISPLAY
   multicore_launch_core1(core1_start);

@@ -25,8 +25,8 @@ endif()
 # Initialize the SDK
 pico_sdk_init()
 
-set(CMAKE_C_FLAGS_RELEASE "-O3 -g3 -fno-data-sections")
-set(CMAKE_CXX_FLAGS_RELEASE "-O3 -g3 -fno-data-sections")
+set(CMAKE_C_FLAGS_RELEASE "-O3 -fno-data-sections")
+set(CMAKE_CXX_FLAGS_RELEASE "-O3 -fno-data-sections")
 
 if (NOT USE_DISPLAY)
   target_compile_definitions(hardware_timer INTERFACE PICO_TIME_DEFAULT_ALARM_POOL_DISABLED=1)
@@ -35,6 +35,8 @@ endif()
 if (BUILD_BRANCH)
   add_executable(branch
     branch.c
+    play.c
+    sd_patterns.c
   )
 
   pico_generate_pio_header(branch ${CMAKE_CURRENT_LIST_DIR}/sound.pio)
@@ -46,6 +48,7 @@ if (BUILD_BRANCH)
   target_link_libraries(branch
     hardware_pio
     hardware_spi
+    pico_multicore
     pico_stdlib
   )
   pico_add_extra_outputs(branch)
