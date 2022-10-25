@@ -1,0 +1,8 @@
+bazel-*
+.vscode/
+
+*.bin
+*.dsf
+*.mp3
+*.mux
+*.raw
