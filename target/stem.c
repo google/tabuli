@@ -11,6 +11,30 @@
 
 #include <stdint.h>
 
+// Each item is 2 bits x 16 channel;
+// bundle 8 of them for word-oriented transfer.
+#define BUNDLE_LEN 8
+// Time slice is 1ms = 1000us
+#define TICK_STEP 1000
+
+#if PICCOLO_PLAY_RAW
+// bytes per second: 22550335.5705 = 420000000/(149*64)*512
+// items per second: 5637583.89262 = 22550335.5705 / 4
+// bundles per second: 704697.986577 = 5637583.89262 / 8
+// bundles per 1000us: 704.697986577
+#define BUNDLE_STEP_INT 704
+#define BUNDLE_STEP_REM 697986577
+#define BUNDLE_STEP_DIV 1000000000
+#else
+// bytes per second: 22579200 = 44100*256*2
+// items per second: 5644800 = 22579200 / 4
+// bundles per second: 705600 = 5644800 / 8
+// bundles per 1000us: 705.6
+#define BUNDLE_STEP_INT 705
+#define BUNDLE_STEP_REM 6
+#define BUNDLE_STEP_DIV 10
+#endif
+
 #define USE_DISPLAY 1
 #define FAKE_PUSH 0
 
@@ -217,26 +241,12 @@ void core0_main(void) {
   pio_sm_set_enabled(pio0, pull_sm, true);
   pio_sm_set_enabled(pio1, push_sm, true);
 
-  // Each item is 2 bits x 16 channel;
-  // bundle 8 of them for word-oriented transfer.
-#define BUNDLE_LEN 8
-
-  // bytes per second: 22579200 = 44100*256*2
-  // items per second: 5644800 = 22579200 / 4
-  // bundles per second: 705600 = 5644800 / 8
-  // bundles per 1000us: 705.6
-
-  uint32_t bundles_step_int = 705;
-  uint32_t bundles_step_rem = 6;
-  uint32_t bundles_step_div = 10;
-  uint32_t tick_step = 1000;
-
   uint32_t read_pos = 0;
   uint32_t read_pos_target = 0;
   uint32_t read_pos_tail = 0;
   uint32_t write_pos = 0;
   uint64_t time_zero = 0;
-  uint64_t next_tick = time_us_64() + tick_step;
+  uint64_t next_tick = time_us_64() + TICK_STEP;
   uint32_t lag = RING_BUFFER_SIZE - 4096;
 #define MY_SPI 0
   uint32_t next_spi = 0;
@@ -255,20 +265,20 @@ void core0_main(void) {
     if (time_us_64() >= next_tick) {
       if (write_pos == 0) { // Still waiting for input.
         time_zero = time_us_64();
-        next_tick = time_zero + (tick_step / 2);
+        next_tick = time_zero + (TICK_STEP / 2);
       } else {
         if (read_pos != read_pos_target) {
           // Ooops, previous transfer is incomplete
           // TODO: report problem
           errors++;
         }
-        read_pos_target += bundles_step_int * BUNDLE_LEN;
-        read_pos_tail += bundles_step_rem;
-        if (read_pos_tail >= bundles_step_div) {
-          read_pos_tail -= bundles_step_div;
+        read_pos_target += BUNDLE_STEP_INT * BUNDLE_LEN;
+        read_pos_tail += BUNDLE_STEP_REM;
+        if (read_pos_tail >= BUNDLE_STEP_DIV) {
+          read_pos_tail -= BUNDLE_STEP_DIV;
           read_pos_target += BUNDLE_LEN;
         }
-        next_tick += tick_step;
+        next_tick += TICK_STEP;
       }
     }
 
@@ -303,7 +313,7 @@ void core0_main(void) {
       write_pos = 0;
       // Give puller some advance.
       time_zero = time_us_64();
-      next_tick = time_zero + (tick_step / 2);
+      next_tick = time_zero + (TICK_STEP / 2);
       read_pos_target = 0;
       num_restarts++;
     }
