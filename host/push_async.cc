@@ -7,6 +7,10 @@
 #include <iostream>
 #include <vector>
 
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+
 #include <libusb.h>
 
 namespace {
@@ -40,11 +44,42 @@ std::chrono::steady_clock::time_point start;
 #define NUM_TRANSFERS 3
 libusb_transfer *transfers[NUM_TRANSFERS] = {0};
 #define CHUNK_SIZE (16 * 1024)
-std::vector<unsigned char> tx_buf;
+unsigned char *tx_buf = nullptr;
+std::vector<unsigned char> tx_buffers(CHUNK_SIZE *NUM_TRANSFERS);
+size_t tx_buf_len = 0;
 size_t free_transfer;
 size_t num_chunks = 0;
 size_t next_offset = 0;
 size_t msg_id = 0;
+
+void on_transfer_complete(struct libusb_transfer *transfer);
+
+const auto encode_byte = [](uint8_t b) {
+  // simple, but works well only for for 0..189
+  if (b > 189) {
+    return 0;
+  }
+  return b + ((b + 1) >> 7);
+};
+
+const auto decode_byte = [](uint8_t b) { return b - (b >> 7); };
+// 4x version: u32 - ((u32 & 0x80808080) >> 7)
+
+void prepareTxBuffer(size_t idx, struct libusb_device_handle *usb_dev) {
+  for (size_t i = 0; i < CHUNK_SIZE; ++i) {
+    tx_buffers[idx * CHUNK_SIZE + i] =
+        encode_byte(tx_buf[next_offset + i] & 0x7F);
+  }
+
+  libusb_fill_bulk_transfer(transfers[idx], usb_dev, /* endpoint */ 0x02,
+                            tx_buffers.data() + idx * CHUNK_SIZE, CHUNK_SIZE,
+                            &on_transfer_complete,
+                            /* user data */ (void *)idx, /* timeout */ 0);
+  next_offset += CHUNK_SIZE;
+  if (next_offset >= tx_buf_len) {
+    next_offset = 0;
+  }
+}
 
 void on_transfer_complete(struct libusb_transfer *transfer) {
   auto end = std::chrono::high_resolution_clock::now();
@@ -63,21 +98,13 @@ void on_transfer_complete(struct libusb_transfer *transfer) {
     start = end;
   }
 
-  libusb_fill_bulk_transfer(
-      transfers[free_transfer], transfer->dev_handle, /* endpoint */ 0x02,
-      tx_buf.data() + next_offset, CHUNK_SIZE,
-      &on_transfer_complete,
-      /* user data */ (void *)free_transfer, /* timeout */ 0);
+  prepareTxBuffer(free_transfer, transfer->dev_handle);
   libusb_submit_transfer(transfers[free_transfer]);
-  next_offset += CHUNK_SIZE;
-  if (next_offset >= tx_buf.size()) {
-    next_offset = 0;
-  }
 
   free_transfer = this_transfer;
 }
 
-void readFile(const char *fname, std::vector<unsigned char> *out) {
+/*void readFile(const char *fname, std::vector<unsigned char> *out) {
   std::ifstream file(fname, std::ios::in | std::ios::binary);
   if (!file.is_open()) {
     fprintf(stderr, "Failed to open %s\n", fname);
@@ -99,21 +126,53 @@ void readFile(const char *fname, std::vector<unsigned char> *out) {
     __builtin_trap();
   }
   file.close();
+}*/
+
+uint8_t *mapFile(const char *fname, size_t *size) {
+  int fd = open(fname, O_RDONLY);
+  if (fd < 0) {
+    fprintf(stderr, "Failed to open %s\n", fname);
+    __builtin_trap();
+  }
+
+  struct stat stats;
+  int err = fstat(fd, &stats);
+  if (err < 0) {
+    fprintf(stderr, "Could not read file stats %s\n", fname);
+    __builtin_trap();
+  }
+
+  size_t byteLen = stats.st_size;
+  byteLen &= ~(CHUNK_SIZE - 1);
+  if (byteLen == 0) {
+    fprintf(stderr, "Input file too short (%zu) %s\n", byteLen, fname);
+    __builtin_trap();
+  }
+
+  void *mem = mmap(nullptr, byteLen, PROT_READ, MAP_SHARED, fd, 0);
+  if (mem == MAP_FAILED) {
+    fprintf(stderr, "Mapping failed %s\n", fname);
+    __builtin_trap();
+  }
+
+  *size = byteLen;
+  return (unsigned char *)mem;
 }
 
 } // namespace
 
 int main(int argc, char **argv) {
-
+  std::vector<unsigned char> buf;
   if (argc == 2) {
     fprintf(stderr, "Loading input file: %s\n", argv[1]);
-    readFile(argv[1], &tx_buf);
-    size_t byteLen = tx_buf.size();
+    tx_buf = mapFile(argv[1], &tx_buf_len);
     fprintf(stderr, "Estimated sample len: %0.3fs\n",
-            byteLen / (44100.f * 256 * 2));
+            tx_buf_len / (44100.f * 256 * 2));
   } else {
-    tx_buf.resize(4096 * CHUNK_SIZE);
-    for (size_t i = 0; i < tx_buf.size(); i++) {
+    buf.resize(4096 * CHUNK_SIZE);
+    tx_buf = buf.data();
+    tx_buf_len = buf.size();
+    for (size_t i = 0; i < tx_buf_len; i++) {
       uint8_t result = 0;
       size_t n = (i >> 5) & 0xFFF; // number of word in the stream
       size_t block_offset = i & 0x1F;
@@ -122,33 +181,19 @@ int main(int argc, char **argv) {
       for (size_t bit = 0; bit < 8; ++bit) {
         size_t branch = branch_offset + bit;
         uint16_t value = 0xCAF0 | branch;
-        size_t value_bit = (value >> (15 - value_bit_offset)) & 1; // reverse bits
+        size_t value_bit =
+            (value >> (15 - value_bit_offset)) & 1; // reverse bits
         result |= value_bit << bit;
       }
       tx_buf[i] = result;
     }
   }
 
-  const auto encode_byte = [](uint8_t b) {
-    // simple, but works well only for for 0..189
-    if (b > 189) {
-      return 0;
-    }
-    return b + ((b + 1) >> 7);
-  };
-
-  const auto decode_byte = [](uint8_t b) { return b - (b >> 7); };
-  // 4x version: u32 - ((u32 & 0x80808080) >> 7)
-
   for (uint8_t b = 0; b <= 189; ++b) {
     if ((decode_byte(encode_byte(b))) != b) {
       fprintf(stderr, "OOOPS %d\n", b);
       __builtin_trap();
     }
-  }
-
-  for (size_t i = 0; i < tx_buf.size(); ++i) {
-    tx_buf[i] = encode_byte(tx_buf[i] & 0x7F);
   }
 
   constexpr unsigned int vendor = 0x0403;
@@ -268,14 +313,7 @@ int main(int argc, char **argv) {
       free_transfer = i;
       continue;
     }
-    libusb_fill_bulk_transfer(transfers[i], usb_dev, /* endpoint */ 0x02,
-                              tx_buf.data() + next_offset, CHUNK_SIZE,
-                              &on_transfer_complete,
-                              /* user data */ (void *)i, /* timeout */ 0);
-    next_offset += CHUNK_SIZE;
-    if (next_offset >= tx_buf.size()) {
-      next_offset = 0;
-    }
+    prepareTxBuffer(i, usb_dev);
   }
 
   start = std::chrono::high_resolution_clock::now();
