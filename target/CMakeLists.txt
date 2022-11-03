@@ -40,6 +40,7 @@ if (BUILD_BRANCH)
   )
 
   pico_generate_pio_header(branch ${CMAKE_CURRENT_LIST_DIR}/sound.pio)
+  pico_generate_pio_header(branch ${CMAKE_CURRENT_LIST_DIR}/sound_sd.pio)
 
   pico_set_binary_type(branch copy_to_ram)
   pico_define_boot_stage2(branch-div4 ${PICO_DEFAULT_BOOT_STAGE2_FILE})
@@ -59,6 +60,8 @@ if (BUILD_STEM)
     stem.c
     ${DISPLAY_IMPLEMENTATION}
   )
+
+  target_compile_definitions(test PRIVATE PICCOLO_PLAY_RAW=0)
 
   pico_set_float_implementation(stem none)
   pico_set_double_implementation(stem none)
