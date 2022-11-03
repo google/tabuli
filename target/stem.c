@@ -38,6 +38,8 @@ void flash(void) {
   sleep_ms(100);
 }
 
+// GPIO defaults: 4mA, no-pullup, pull-down, schmitt, slow-slew
+
 void init_pio(void) {
   pio_clear_instruction_memory(pio0);
   uint32_t ft1248_offset = pio_add_program(pio0, &ft1248_program);
@@ -46,10 +48,10 @@ void init_pio(void) {
 
   uint32_t pull_sm = 0;
 
-  const uint32_t data0_pin = 1;
-  // const uint32_t data7_pin = 8;
-  const uint32_t miso_pin = 0;
+  const uint32_t data0_pin = 0;
+  // const uint32_t data7_pin = 7;
 
+  const uint32_t miso_pin = 8;
   const uint32_t ss_pin = 9;
   const uint32_t clk_pin = 10;
 
@@ -90,11 +92,14 @@ void init_pio(void) {
   //----------------------------------------------------------------------------
 
   uint32_t push_sm = 1;
-  const uint32_t num_mosi_pin = 15;
-  const uint32_t cs_pin = 11;
-  const uint32_t sclk_pin = 12;
-  const uint32_t mosi0_pin = 13;
-  const uint32_t mosi_last_pin = mosi0_pin + num_mosi_pin - 1;
+  const uint32_t pspi_base = 18; // for convenience - start on the other side
+  const uint32_t cs_pin = pspi_base;
+  const uint32_t sclk_pin = pspi_base + 1;
+  const uint32_t mosi0_pin = pspi_base + 2;
+  // TODO: add workaround for no-display setup
+  // TODO: last two pins (A0, A1) seem to interfere with I2C output (A2, A3)
+  const uint32_t mosi_last_pin = 25;
+  const uint32_t num_mosi_pin = mosi_last_pin - mosi0_pin + 1;
   pio_sm_config push_c = pio_get_default_sm_config();
 
   sm_config_set_out_pins(&push_c, mosi0_pin, num_mosi_pin);
@@ -120,9 +125,9 @@ void init_pio(void) {
                                mosi_mask << mosi0_pin);
   // CS and SCLK are out as well.
   pio_sm_set_pins_with_mask(pio1, push_sm, 1 << cs_pin, 1 << cs_pin);
+  pio_sm_set_pindirs_with_mask(pio1, push_sm, 1 << cs_pin, 1 << cs_pin);
   pio_sm_set_pins_with_mask(pio1, push_sm, 0, 1 << sclk_pin);
   pio_sm_set_pindirs_with_mask(pio1, push_sm, 1 << sclk_pin, 1 << sclk_pin);
-  pio_sm_set_pindirs_with_mask(pio1, push_sm, 1 << cs_pin, 1 << cs_pin);
 
   //----------------------------------------------------------------------------
 
@@ -130,19 +135,14 @@ void init_pio(void) {
   gpio_set_input_hysteresis_enabled(miso_pin, false);
 
   for (uint32_t i = data0_pin; i <= clk_pin; ++i) {
-    gpio_pull_up(i);
+    // gpio_pull_up(i);
     gpio_set_input_hysteresis_enabled(i, false);
     pio_gpio_init(pio0, i);
+    gpio_set_drive_strength(i, GPIO_DRIVE_STRENGTH_2MA);
   }
 
-  for (uint32_t i = cs_pin; i <= sclk_pin; ++i) {
+  for (uint32_t i = pspi_base; i <= mosi_last_pin; ++i) {
     pio_gpio_init(pio1, i);
-  }
-  for (uint32_t i = mosi0_pin; i <= mosi_last_pin; ++i) {
-    pio_gpio_init(pio1, i);
-  }
-
-  for (uint32_t i = cs_pin; i <= mosi0_pin; ++i) {
     gpio_set_drive_strength(i, GPIO_DRIVE_STRENGTH_2MA);
   }
 
@@ -235,6 +235,7 @@ void core0_main(void) {
   uint32_t read_pos_target = 0;
   uint32_t read_pos_tail = 0;
   uint32_t write_pos = 0;
+  uint64_t time_zero = 0;
   uint64_t next_tick = time_us_64() + tick_step;
   uint32_t lag = RING_BUFFER_SIZE - 4096;
 #define MY_SPI 0
@@ -253,11 +254,13 @@ void core0_main(void) {
     // Update target, if necessary.
     if (time_us_64() >= next_tick) {
       if (write_pos == 0) { // Still waiting for input.
-        next_tick = time_us_64() + (tick_step / 2);
+        time_zero = time_us_64();
+        next_tick = time_zero + (tick_step / 2);
       } else {
         if (read_pos != read_pos_target) {
           // Ooops, previous transfer is incomplete
           // TODO: report problem
+          errors++;
         }
         read_pos_target += bundles_step_int * BUNDLE_LEN;
         read_pos_tail += bundles_step_rem;
@@ -299,7 +302,8 @@ void core0_main(void) {
       read_pos_tail = 0;
       write_pos = 0;
       // Give puller some advance.
-      next_tick = time_us_64() + (tick_step / 2);
+      time_zero = time_us_64();
+      next_tick = time_zero + (tick_step / 2);
       read_pos_target = 0;
       num_restarts++;
     }

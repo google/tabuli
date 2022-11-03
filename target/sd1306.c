@@ -108,10 +108,12 @@ void display_reinit(int full) {
 
 void display_init(void) {
   i2c_init(SD1306_I2C, 1700000);
-  gpio_set_function(SD1306_BASE_PIN, GPIO_FUNC_I2C);
-  gpio_set_function(SD1306_BASE_PIN + 1, GPIO_FUNC_I2C);
-  gpio_pull_up(SD1306_BASE_PIN);
-  gpio_pull_up(SD1306_BASE_PIN + 1);
+  // GPIO requirements: pull-up, slow-slew, schmitt
+  for (uint32_t pin = 0; pin < 2; pin++) {
+    gpio_pull_up(SD1306_BASE_PIN + pin);
+    gpio_set_drive_strength(SD1306_BASE_PIN + pin, GPIO_DRIVE_STRENGTH_2MA);
+    gpio_set_function(SD1306_BASE_PIN + pin, GPIO_FUNC_I2C);
+  }
   display_reinit(1);
   screen[0] = 0x40;
   display_clear();
