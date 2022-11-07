@@ -7,7 +7,8 @@ project(piccolo-target C CXX ASM)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
 
-set(USE_DISPLAY 1)
+set(USE_DISPLAY 0)
+set(PLAY_RAW 1)
 
 set(BUILD_STEM 1)
 set(BUILD_BRANCH 1)
@@ -28,9 +29,10 @@ pico_sdk_init()
 set(CMAKE_C_FLAGS_RELEASE "-O3 -fno-data-sections")
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 -fno-data-sections")
 
-if (NOT USE_DISPLAY)
-  target_compile_definitions(hardware_timer INTERFACE PICO_TIME_DEFAULT_ALARM_POOL_DISABLED=1)
-endif()
+# This cuts binary size, but disables alarms.
+#if (NOT USE_DISPLAY)
+#  target_compile_definitions(hardware_timer INTERFACE PICO_TIME_DEFAULT_ALARM_POOL_DISABLED=1)
+#endif()
 
 if (BUILD_BRANCH)
   add_executable(branch
@@ -38,6 +40,8 @@ if (BUILD_BRANCH)
     play.c
     sd_patterns.c
   )
+
+  target_compile_definitions(branch PRIVATE PICCOLO_PLAY_RAW=${PLAY_RAW})
 
   pico_generate_pio_header(branch ${CMAKE_CURRENT_LIST_DIR}/sound.pio)
   pico_generate_pio_header(branch ${CMAKE_CURRENT_LIST_DIR}/sound_sd.pio)
@@ -61,7 +65,7 @@ if (BUILD_STEM)
     ${DISPLAY_IMPLEMENTATION}
   )
 
-  target_compile_definitions(test PRIVATE PICCOLO_PLAY_RAW=0)
+  target_compile_definitions(stem PRIVATE PICCOLO_PLAY_RAW=${PLAY_RAW})
 
   pico_set_float_implementation(stem none)
   pico_set_double_implementation(stem none)
@@ -70,9 +74,9 @@ if (BUILD_STEM)
   pico_set_divider_implementation(stem compiler)
   # pico_set_int64_ops_implementation(stem compiler)
 
-  pico_enable_stdio_semihosting(stem 0)
+  #pico_enable_stdio_semihosting(stem 0)
+  pico_enable_stdio_usb(stem 1)
   pico_enable_stdio_uart(stem 0)
-  pico_enable_stdio_usb(stem 0)
 
   pico_generate_pio_header(stem ${CMAKE_CURRENT_LIST_DIR}/ft1248.pio)
   pico_generate_pio_header(stem ${CMAKE_CURRENT_LIST_DIR}/pspi.pio)
@@ -97,6 +101,8 @@ if (BUILD_TEST)
     sd1306.c
     test.c
   )
+
+  target_compile_definitions(test PRIVATE PICCOLO_PLAY_RAW=${PLAY_RAW})
 
   target_compile_definitions(test PRIVATE SD1306_I2C=i2c1)
   target_compile_definitions(test PRIVATE SD1306_BASE_PIN=26)

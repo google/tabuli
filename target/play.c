@@ -54,6 +54,9 @@ void play(Cookie cookie, uint16_t *src) {
   systick_hw->csr = 5; // enable + no-int + cpu-clk
 #endif
 
+#if PICCOLO_PLAY_RAW
+  pio_set_sm_mask_enabled(pio0, 0xF, true);
+#else
   // pio_set_sm_mask_enabled(pio0, 0xF, true);
   // pio_set_sm_mask_enabled(pio1, 0xF, true);
   // --
@@ -71,8 +74,15 @@ void play(Cookie cookie, uint16_t *src) {
                : // no output
                : "l"(pio0_ctrl), "l"(pio1_ctrl), "l"(all_sms)
                : "memory");
+#endif
 
-  // After launching SMs immediately consume 2 items; replenish.
+  // After launching SMs immediately consumes; replenish.
+#if PICCOLO_PLAY_RAW
+  pio0->txf[0] = 0;
+  pio0->txf[1] = 0;
+  pio0->txf[2] = 0;
+  pio0->txf[3] = 0;
+#else
   pio0->txf[0] = 0;
   pio1->txf[0] = 0;
   pio0->txf[1] = 0;
@@ -89,26 +99,33 @@ void play(Cookie cookie, uint16_t *src) {
   pio1->txf[2] = 0;
   pio0->txf[3] = 0;
   pio1->txf[3] = 0;
+#endif
 
   while (rw_flag == 1) {
-    uint32_t pos = cookie.pos + kStepInt;
+#if PICCOLO_PLAY_RAW
+    uint32_t increment = 1;
+#else
+    uint32_t fine_pos = cookie.pos + kStepInt;
     uint32_t tail = cookie.tail + kStepRem;
     if (tail >= kStepDiv) {
       tail -= kStepDiv;
-      pos++;
+      fine_pos++;
     }
-    uint32_t increment = (pos >> 16) * 16;
-    pos &= 0xFFFF;
-    cookie.pos = pos;
+    uint32_t increment = fine_pos >> 16;
+    cookie.pos = fine_pos & 0xFFFF;
     cookie.tail = tail;
 
-    uint32_t next_mul = pos;
+    uint32_t next_mul = fine_pos;
     uint32_t mul = 0x10000 - next_mul;
+#endif
 
-    pos = read_pos + increment;
+    uint32_t pos = read_pos + increment * 16;
     read_pos = pos;
-    uint16_t *sample = src + (pos & BUF_MASK);
-
+    uint16_t *sample_addr = src + (pos & BUF_MASK);
+#if PICCOLO_PLAY_RAW
+    uint32_t *sample = (uint32_t *)sample_addr;
+#else
+    uint16_t *sample = sample_addr;
 #pragma GCC unroll 16
     for (uint32_t i = 0; i < 16; ++i) {
       uint32_t tmp1 = sample[i]; // fixed offset after unroll
@@ -135,9 +152,23 @@ void play(Cookie cookie, uint16_t *src) {
       tmp1 <<= 2;
       cookie.bank[i] = tmp1; // on stack
     }
+#endif
 
     io_wo_32 *pio0txf = pio0->txf;
     io_wo_32 *pio1txf = pio1->txf;
+
+#if PICCOLO_PLAY_RAW
+    (void)pio1txf;
+    for (uint32_t j = 0; j < 2; ++j) {
+      while (pio_sm_is_tx_fifo_full(pio0, 0)) {
+        // wait for FIFO; all SM should become ready since they are synced
+      }
+      pio0txf[0] = sample[j + 0];
+      pio0txf[1] = sample[j + 4];
+      pio0txf[2] = sample[j + 8];
+      pio0txf[3] = sample[j + 12];
+    }
+#else
 #pragma GCC unroll 4
     for (uint32_t j = 0; j < 4; ++j) {
       while (pio_sm_is_tx_fifo_full(pio0, 0)) {
@@ -162,17 +193,18 @@ void play(Cookie cookie, uint16_t *src) {
       pio1txf[3] = base[cookie.bank[15]];
       // dbg[j] = pio0->fdebug | pio1->fdebug;
     }
+#endif
 
 #if DEBUG_CLK
-    uint32_t tick = systick_hw->cvr;
-    uint32_t delta = MAX_TICK - tick;
-    uint32_t in_time = ((delta - CLK_PER_LOOP) >> 31) & 1;
-    *(in_time ? set : clr) = 1 << 25;
-    systick_hw->cvr = 0;
+      uint32_t tick = systick_hw->cvr;
+      uint32_t delta = MAX_TICK - tick;
+      uint32_t in_time = ((delta - CLK_PER_LOOP) >> 31) & 1;
+      *(in_time ? set : clr) = 1 << 25;
+      systick_hw->cvr = 0;
 #endif
-    uint32_t dbg = pio0->fdebug | pio1->fdebug;
-    //*((dbg & 0x00FF0000) ? set : clr) = 1 << 25;
-    pio0->fdebug = 0xFFFF0000;
-    pio1->fdebug = 0xFFFF0000;
+      uint32_t dbg = pio0->fdebug | pio1->fdebug;
+      //*((dbg & 0x00FF0000) ? set : clr) = 1 << 25;
+      pio0->fdebug = 0xFFFF0000;
+      pio1->fdebug = 0xFFFF0000;
+    }
   }
-}

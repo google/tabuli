@@ -3,12 +3,14 @@
 #include "hardware/clocks.h"
 #include "hardware/gpio.h"
 #include "hardware/structs/bus_ctrl.h"
+#include "hardware/structs/syscfg.h"
 #include "hardware/vreg.h"
 #include "pico/multicore.h"
 #include "pico/stdlib.h"
 #include "pspi.pio.h"
 #include <hardware/pio.h>
 
+#include <stdio.h>
 #include <stdint.h>
 
 // Each item is 2 bits x 16 channel;
@@ -122,7 +124,8 @@ void init_pio(void) {
   const uint32_t mosi0_pin = pspi_base + 2;
   // TODO: add workaround for no-display setup
   // TODO: last two pins (A0, A1) seem to interfere with I2C output (A2, A3)
-  const uint32_t mosi_last_pin = 25;
+  //       also remember, GPIO25 is led
+  const uint32_t mosi_last_pin = 24;
   const uint32_t num_mosi_pin = mosi_last_pin - mosi0_pin + 1;
   pio_sm_config push_c = pio_get_default_sm_config();
 
@@ -183,7 +186,10 @@ static void print_hex(char *out, uint32_t value) {
   }
 }
 
-void core1_main(void) {
+// Currently only core 0 is allowed to interact with usb-stdio
+void core0_main(void) {
+  stdio_usb_init();
+
   display_init();
   display_print(0, 0, "DEAD");
   display_print(4, 6, "BEEF");
@@ -191,7 +197,7 @@ void core1_main(void) {
   display_print(12, 18, "BABE");
   display_flush();
 
-  char txt[33] = "01234567:01234567/01234567      ";
+  char txt[33] = "01234567:01234567/01234567     S";
 
   uint32_t next_line = 0;
   uint32_t index = 0;
@@ -211,17 +217,20 @@ void core1_main(void) {
     print_hex(txt, iter);
     print_hex(txt + 9, errors);
     print_hex(txt + 18, bytes);
+    printf("%s\n", txt);
     display_print(0, next_line * 6, txt);
     display_flush();
     next_line++;
     if (next_line == 9) {
       next_line = 0;
     }
+    // Limit to 10 msg/s.
+    sleep_ms(100);
     multicore_fifo_push_blocking(0); // signal we are ready
   }
 }
 
-void core0_main(void) {
+void core1_main(void) {
   if (CPU_FREQ_MHZ != 125) {
     for (uint32_t i = 0; i < 20 * 1000 * 1000; ++i) {
       NOP;
@@ -317,7 +326,7 @@ void core0_main(void) {
       read_pos_target = 0;
       num_restarts++;
     }
-#if USE_DISPLAY
+
     if (multicore_fifo_rvalid()) {
       (void)multicore_fifo_pop_blocking();
       multicore_fifo_push_blocking(read_pos);
@@ -325,7 +334,6 @@ void core0_main(void) {
       // multicore_fifo_push_blocking(write_pos - read_pos);
       multicore_fifo_push_blocking(errors);
     }
-#endif
   }
 }
 
@@ -343,10 +351,10 @@ void core1_start(void) {
 int main(void) {
   init_flash();
 
-  // Make core0 the only high-priority master; this way is never stalled by
+  // Make core1 the only high-priority master; this way is never stalled by
   // memory access arbitration.
   //                       CPU_0      CPU_1      DMA_R      DMA_W
-  bus_ctrl_hw->priority = (1 << 0) | (0 << 4) | (0 << 8) | (0 << 12);
+  bus_ctrl_hw->priority = (0 << 0) | (1 << 4) | (0 << 8) | (0 << 12);
   while (!bus_ctrl_hw->priority_ack) {
     // no-op
   }
@@ -358,25 +366,19 @@ int main(void) {
     set_sys_clock_khz(CPU_FREQ_MHZ * 1000, true);
     // Wait until clock is stable.
     flash();
-    clock_configure(clk_peri, 0,
-                    CLOCKS_CLK_PERI_CTRL_AUXSRC_VALUE_CLKSRC_PLL_SYS,
-                    CPU_FREQ_KHZ * 1000, CPU_FREQ_KHZ * 1000);
+    // Just because.
     flash();
   }
 
   // Deinits flash.
   init_pio();
 
-#if USE_DISPLAY
   multicore_launch_core1(core1_start);
   multicore_fifo_push_blocking(kCore0Ready);
   uint32_t test = multicore_fifo_pop_blocking();
   if (test == kCore1Ready) {
     core0_main();
   }
-#else
-  core0_main();
-#endif
 
   while (1) {
     tight_loop_contents();

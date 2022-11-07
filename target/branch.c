@@ -10,6 +10,7 @@
 #include "pico/stdlib.h"
 #include "play.h"
 #include "sound.pio.h"
+#include "sound_sd.pio.h"
 
 #define CPU_FREQ_MHZ 420
 #define CPU_FREQ_KHZ (CPU_FREQ_MHZ * 1000)
@@ -20,6 +21,8 @@ uint32_t kStartPlay = 0xC0DEABBA;
 
 // First 4 pins are used for SPI.
 #define AUDIO_PIN_0 4
+// Use the other side for debug
+#define AUDIO_PIN_LAST 15
 // Free pin start: 20 = 4 + 16
 
 // TODO: remember about tail copying!
@@ -38,48 +41,83 @@ void flash(void) {
 }
 
 // Loads the program. SMs are (re-)configured by `prepare_pio`.
-void init_pio(uint32_t pio_n) {
-  PIO pio = (pio_n == 0) ? pio0 : pio1;
-  pio_clear_instruction_memory(pio);
-  pio_add_program_at_offset(pio, &sound_program, 0);
+void init_pio() {
+  pio_clear_instruction_memory(pio0);
+  pio_clear_instruction_memory(pio1);
+  if (PICCOLO_PLAY_RAW) {
+    pio_add_program_at_offset(pio0, &sound_sd_program, 0);
+  } else {
+    pio_add_program_at_offset(pio0, &sound_program, 0);
+    pio_add_program_at_offset(pio1, &sound_program, 0);
+  }
 }
 
 // Resets SMs.
-void prepare_pio(uint32_t pio_n) {
-  PIO pio = (pio_n == 0) ? pio0 : pio1;
-  uint32_t entry_point =
-      (pio_n == 0) ? sound_offset_entry_point0 : sound_offset_entry_point1;
-
+void prepare_pio() {
   pio_sm_config c = pio_get_default_sm_config();
+  if (PICCOLO_PLAY_RAW) {
+    // sm_config_set_in_pins(&c, data0_pin);
+    // sm_config_set_sideset(&c, 0, false, false);
+    sm_config_set_clkdiv_int_frac(&c, /* div_int */ 149, /* div_frac */ 0);
+    sm_config_set_wrap(&c, sound_sd_wrap_target, sound_sd_wrap);
+    // sm_config_set_jmp_pin(&c, miso_pin);
+    sm_config_set_in_shift(&c, /* shift_right */ true, /* autopush */ false,
+                           /* push threshold */ 32);
+    sm_config_set_out_shift(&c, /* shift_right */ true, /* autopull */ true,
+                            /* pull_threshold */ 32);
+    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX);
+    // sm_config_set_out_special(&c, sticky, has_enable_pin, enable_pin_index);
+    // sm_config_set_mov_status(&c, status_sel, status_n);
 
-  // sm_config_set_in_pins(&c, data0_pin);
-  sm_config_set_sideset(&c, 2, true, false); // 2 = 1 bit + enable
-  sm_config_set_clkdiv_int_frac(&c, /* div_int */ 1, /* div_frac */ 0);
-  sm_config_set_wrap(&c, sound_wrap_target, sound_wrap);
-  // sm_config_set_jmp_pin(&c, miso_pin);
-  sm_config_set_in_shift(&c, /* shift_right */ true, /* autopush */ false,
-                         /* push threshold */ 32);
-  sm_config_set_out_shift(&c, /* shift_right */ true, /* autopull */ false,
-                          /* pull_threshold */ 32);
-  sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX);
-  // sm_config_set_out_special(&c, sticky, has_enable_pin, enable_pin_index);
-  // sm_config_set_mov_status(&c, status_sel, status_n);
+    for (uint32_t sm = 0; sm < 4; ++sm) {
+      uint32_t out_pins = AUDIO_PIN_0 + sm;
+      sm_config_set_out_pins(&c, out_pins, 1);
+      // Clear pins.
+      pio_sm_set_pins_with_mask(pio0, sm, 0, 1 << out_pins);
+      // Set direction
+      pio_sm_set_consecutive_pindirs(pio0, sm, out_pins, 1, true);
 
-  for (uint32_t sm = 0; sm < 4; ++sm) {
-    uint32_t out_pins = AUDIO_PIN_0 + pio_n * 8 + 2 * sm;
-    sm_config_set_out_pins(&c, out_pins, 1);
-    sm_config_set_sideset_pins(&c, out_pins + 1);
-    // Clear pins.
-    pio_sm_set_pins_with_mask(pio, sm, 0, 3 << out_pins);
-    // Set direction
-    pio_sm_set_consecutive_pindirs(pio, sm, out_pins, 2, true);
+      pio_gpio_init(pio0, out_pins);
+      gpio_set_drive_strength(out_pins, GPIO_DRIVE_STRENGTH_12MA);
 
-    for (uint32_t i = 0; i < 2; ++i) {
-      pio_gpio_init(pio, out_pins + i);
-      gpio_set_drive_strength(out_pins + i, GPIO_DRIVE_STRENGTH_12MA);
+      pio_sm_init(pio0, sm, sound_sd_offset_entry_point, &c);
     }
+  } else {
+    for (uint32_t pio_n = 0; pio_n < 2; ++pio_n) {
+      PIO pio = (pio_n == 0) ? pio0 : pio1;
+      uint32_t entry_point =
+          (pio_n == 0) ? sound_offset_entry_point0 : sound_offset_entry_point1;
 
-    pio_sm_init(pio, sm, entry_point, &c);
+      // sm_config_set_in_pins(&c, data0_pin);
+      sm_config_set_sideset(&c, 2, true, false); // 2 = 1 bit + enable
+      sm_config_set_clkdiv_int_frac(&c, /* div_int */ 1, /* div_frac */ 0);
+      sm_config_set_wrap(&c, sound_wrap_target, sound_wrap);
+      // sm_config_set_jmp_pin(&c, miso_pin);
+      sm_config_set_in_shift(&c, /* shift_right */ true, /* autopush */ false,
+                             /* push threshold */ 32);
+      sm_config_set_out_shift(&c, /* shift_right */ true, /* autopull */ false,
+                              /* pull_threshold */ 32);
+      sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX);
+      // sm_config_set_out_special(&c, sticky, has_enable_pin,
+      // enable_pin_index); sm_config_set_mov_status(&c, status_sel, status_n);
+
+      for (uint32_t sm = 0; sm < 4; ++sm) {
+        uint32_t out_pins = AUDIO_PIN_0 + pio_n * 8 + 2 * sm;
+        sm_config_set_out_pins(&c, out_pins, 1);
+        sm_config_set_sideset_pins(&c, out_pins + 1);
+        // Clear pins.
+        pio_sm_set_pins_with_mask(pio, sm, 0, 3 << out_pins);
+        // Set direction
+        pio_sm_set_consecutive_pindirs(pio, sm, out_pins, 2, true);
+
+        for (uint32_t i = 0; i < 2; ++i) {
+          pio_gpio_init(pio, out_pins + i);
+          gpio_set_drive_strength(out_pins + i, GPIO_DRIVE_STRENGTH_12MA);
+        }
+
+        pio_sm_init(pio, sm, entry_point, &c);
+      }
+    }
   }
 }
 
@@ -90,8 +128,7 @@ void core0_main(void) {
     // Prepare things, so we could start immediately.
     memset(&cookie, 0, sizeof(cookie));
 
-    prepare_pio(0);
-    prepare_pio(1);
+    prepare_pio();
 
     // Prefill TX FIFO.
     for (uint32_t i = 0; i < 8; ++i) {
@@ -111,8 +148,9 @@ void core0_main(void) {
 
     // Stop SMs.
     pio_set_sm_mask_enabled(pio0, 0xF, false);
-    pio_set_sm_mask_enabled(pio1, 0xF, false);
-
+    if (!PICCOLO_PLAY_RAW) {
+      pio_set_sm_mask_enabled(pio1, 0xF, false);
+    }
     // TODO: set pins to 0.
   }
 }
@@ -140,18 +178,25 @@ void core1_main(void) {
       // no-op
     }
     multicore_fifo_push_blocking(kStartPlay);
+    gpio_put(16, 1);
 
+    uint32_t cntr = 0;
     // While enough input...
     while (read_pos < write_pos) {
+      gpio_put(17, cntr++ < 64);
       while (spi_hw->sr & SPI_SSPSR_RNE_BITS) {
+        cntr = 0;
         buffer[write_pos++ & BUF_MASK] = spi_hw->dr;
       }
       if (write_pos >= write_pos_wrap) {
         write_pos_wrap += BUF_LEN;
         memcpy(buffer + BUF_LEN, buffer, 16 * sizeof(buffer[0]));
       }
-      // TODO: check write_pos < read_pos + BUF_LEN
+      gpio_put(18, read_pos + BUF_LEN > write_pos);
     }
+    gpio_put(16, 0);
+    gpio_put(17, 0);
+    gpio_put(18, 0);
     // Request stop.
     rw_flag = 2;
     // Wait for stop.
@@ -177,8 +222,12 @@ void core1_start(void) {
 int main(void) {
   init_flash();
 
-  init_pio(0);
-  init_pio(1);
+  for (uint32_t i = 0; i < 3; ++i) {
+    gpio_init(16 + i);
+    gpio_set_dir(16 + i, GPIO_OUT);
+  }
+
+  init_pio();
 
   spi_init(spi0, CPU_FREQ_MHZ / 14);
   spi_set_slave(spi0, true);
