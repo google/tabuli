@@ -27,7 +27,11 @@ volatile uint32_t read_pos = 0;
 volatile uint32_t write_pos = 0;
 volatile uint32_t rw_flag = 0;
 
-extern const uint32_t *sd_patterns;
+#define PWM_BAND_BITS 7
+extern const uint32_t sd_patterns[((1 >> PWM_BAND_BITS) + 1) * 4];
+
+// 1 means no PWM; >= 5 sounds bad
+#define PWM_BITS 4
 
 #define MAX_TICK 0xFFFFFF
 #define DEBUG_CLK 0
@@ -128,6 +132,7 @@ void play(Cookie cookie, uint16_t *src) {
     uint16_t *sample = sample_addr;
 #pragma GCC unroll 16
     for (uint32_t i = 0; i < 16; ++i) {
+      if ((i & 7) >= 6) continue;
       uint32_t tmp1 = sample[i]; // fixed offset after unroll
       tmp1 *= mul;
       uint32_t tmp2 = sample[i + 16]; // fixed offset after unroll
@@ -144,12 +149,12 @@ void play(Cookie cookie, uint16_t *src) {
           : "=l"(tmp1)
           : "0"(tmp1), "l"(tmp2));
 
-      tmp2 = tmp1 << (32 - 9);
-      tmp2 >>= (32 - 9);
+      tmp2 = tmp1 << (15 + PWM_BITS);
+      tmp2 >>= (15 + PWM_BITS);
       cookie.qs[i] = tmp2; // on stack
 
-      tmp1 >>= 9;
-      tmp1 <<= 2;
+      tmp1 >>= 17 - PWM_BITS;
+      tmp1 <<= 2 + PWM_BAND_BITS - PWM_BITS;
       cookie.bank[i] = tmp1; // on stack
     }
 #endif
@@ -181,16 +186,16 @@ void play(Cookie cookie, uint16_t *src) {
       pio0txf[1] = base[cookie.bank[3]];
       pio0txf[2] = base[cookie.bank[4]];
       pio0txf[2] = base[cookie.bank[5]];
-      pio0txf[3] = base[cookie.bank[6]];
-      pio0txf[3] = base[cookie.bank[7]];
+      //pio0txf[3] = base[cookie.bank[6]];
+      //pio0txf[3] = base[cookie.bank[7]];
       pio1txf[0] = base[cookie.bank[8]];
       pio1txf[0] = base[cookie.bank[9]];
       pio1txf[1] = base[cookie.bank[10]];
       pio1txf[1] = base[cookie.bank[11]];
       pio1txf[2] = base[cookie.bank[12]];
       pio1txf[2] = base[cookie.bank[13]];
-      pio1txf[3] = base[cookie.bank[14]];
-      pio1txf[3] = base[cookie.bank[15]];
+      //pio1txf[3] = base[cookie.bank[14]];
+      //pio1txf[3] = base[cookie.bank[15]];
       // dbg[j] = pio0->fdebug | pio1->fdebug;
     }
 #endif

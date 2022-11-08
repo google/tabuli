@@ -112,7 +112,7 @@ void prepare_pio() {
 
         for (uint32_t i = 0; i < 2; ++i) {
           pio_gpio_init(pio, out_pins + i);
-          gpio_set_drive_strength(out_pins + i, GPIO_DRIVE_STRENGTH_12MA);
+          gpio_set_drive_strength(out_pins + i, GPIO_DRIVE_STRENGTH_2MA);
         }
 
         pio_sm_init(pio, sm, entry_point, &c);
@@ -226,6 +226,8 @@ int main(void) {
     gpio_init(16 + i);
     gpio_set_dir(16 + i, GPIO_OUT);
   }
+
+  gpio_set_slew_rate(4, GPIO_SLEW_RATE_FAST);
 
   init_pio();
 
