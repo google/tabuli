@@ -1,41 +1,18 @@
+#include <stdint.h>
+#include <stdio.h>
+
+#include "branch.h"
 #include "display.h"
 #include "ft1248.pio.h"
 #include "hardware/clocks.h"
 #include "hardware/gpio.h"
+#include "hardware/pio.h"
 #include "hardware/structs/bus_ctrl.h"
 #include "hardware/structs/syscfg.h"
 #include "hardware/vreg.h"
 #include "pico/multicore.h"
 #include "pico/stdlib.h"
 #include "pspi.pio.h"
-#include <hardware/pio.h>
-
-#include <stdio.h>
-#include <stdint.h>
-
-// Each item is 2 bits x 16 channel;
-// bundle 8 of them for word-oriented transfer.
-#define BUNDLE_LEN 8
-// Time slice is 1ms = 1000us
-#define TICK_STEP 1000
-
-#if PICCOLO_PLAY_RAW
-// bytes per second: 22550335.5705 = 420000000/(149*64)*512
-// items per second: 5637583.89262 = 22550335.5705 / 4
-// bundles per second: 704697.986577 = 5637583.89262 / 8
-// bundles per 1000us: 704.697986577
-#define BUNDLE_STEP_INT 704
-#define BUNDLE_STEP_REM 697986577
-#define BUNDLE_STEP_DIV 1000000000
-#else
-// bytes per second: 22579200 = 44100*256*2
-// items per second: 5644800 = 22579200 / 4
-// bundles per second: 705600 = 5644800 / 8
-// bundles per 1000us: 705.6
-#define BUNDLE_STEP_INT 705
-#define BUNDLE_STEP_REM 6
-#define BUNDLE_STEP_DIV 10
-#endif
 
 #define USE_DISPLAY 1
 #define FAKE_PUSH 0

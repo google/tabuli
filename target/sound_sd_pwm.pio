@@ -1,4 +1,4 @@
-.program sound_sd
+.program sound_sd_pwm
 
 public entry_point:      ;
 .wrap_target

@@ -8,7 +8,12 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
 
 set(USE_DISPLAY 0)
-set(PLAY_RAW 0)
+
+# 0: RAW
+# 1: SD + DITHER
+# 2: SD + PWM
+set(PICCOLO_PLAY_MODE 1)
+add_compile_definitions(branch PRIVATE PICCOLO_PLAY_MODE=${PICCOLO_PLAY_MODE})
 
 set(BUILD_STEM 1)
 set(BUILD_BRANCH 1)
@@ -35,16 +40,27 @@ set(CMAKE_CXX_FLAGS_RELEASE "-O3 -fno-data-sections")
 #endif()
 
 if (BUILD_BRANCH)
+  if (PICCOLO_PLAY_MODE EQUAL 0)
+    set (PLAY_SRC play_raw.c)
+  elseif (PICCOLO_PLAY_MODE EQUAL 1)
+    set (PLAY_SRC
+      play_sd_dither.c
+      sd_patterns.c
+    )
+  elseif (PICCOLO_PLAY_MODE EQUAL 2)
+    set (PLAY_SRC play_sd_pwm.c)
+  else()
+    message(FATAL_ERROR "Unknown mode")
+  endif()
+
   add_executable(branch
     branch.c
-    play.c
-    sd_patterns.c
+    ${PLAY_SRC}
   )
 
-  target_compile_definitions(branch PRIVATE PICCOLO_PLAY_RAW=${PLAY_RAW})
-
-  pico_generate_pio_header(branch ${CMAKE_CURRENT_LIST_DIR}/sound.pio)
-  pico_generate_pio_header(branch ${CMAKE_CURRENT_LIST_DIR}/sound_sd.pio)
+  pico_generate_pio_header(branch ${CMAKE_CURRENT_LIST_DIR}/sound_raw.pio)
+  pico_generate_pio_header(branch ${CMAKE_CURRENT_LIST_DIR}/sound_sd_dither.pio)
+  pico_generate_pio_header(branch ${CMAKE_CURRENT_LIST_DIR}/sound_sd_pwm.pio)
 
   pico_set_binary_type(branch copy_to_ram)
   pico_define_boot_stage2(branch-div4 ${PICO_DEFAULT_BOOT_STAGE2_FILE})
@@ -64,8 +80,6 @@ if (BUILD_STEM)
     stem.c
     ${DISPLAY_IMPLEMENTATION}
   )
-
-  target_compile_definitions(stem PRIVATE PICCOLO_PLAY_RAW=${PLAY_RAW})
 
   pico_set_float_implementation(stem none)
   pico_set_double_implementation(stem none)
@@ -101,8 +115,6 @@ if (BUILD_TEST)
     sd1306.c
     test.c
   )
-
-  target_compile_definitions(test PRIVATE PICCOLO_PLAY_RAW=${PLAY_RAW})
 
   target_compile_definitions(test PRIVATE SD1306_I2C=i2c1)
   target_compile_definitions(test PRIVATE SD1306_BASE_PIN=26)

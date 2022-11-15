@@ -1,4 +1,4 @@
-.program sound
+.program sound_sd_dither
 .side_set 1 opt
 
 ; Outer loop: pull 2 items and serve
