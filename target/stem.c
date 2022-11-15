@@ -267,7 +267,12 @@ void core1_main(void) {
     while ((write_pos < read_pos + lag) &&
            !pio_sm_is_rx_fifo_empty(pio0, pull_sm)) {
       uint32_t encoded = pio_sm_get(pio0, pull_sm);
+#define EIGHT_TO_SIX 0
+#if EIGHT_TO_SIX
       uint32_t decoded = encoded - ((encoded >> 7) & 0x01010101);
+#else
+      uint32_t decoded = encoded;
+#endif
       ring_buffer[write_pos++ & RING_BUFFER_MASK] = decoded;
     }
     // Update target, if necessary.

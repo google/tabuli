@@ -31,7 +31,7 @@ volatile uint32_t rw_flag = 0;
 extern const uint32_t sd_patterns[((1 >> PWM_BAND_BITS) + 1) * 4];
 
 // 1 means no PWM; >= 5 sounds bad
-#define PWM_BITS 4
+#define PWM_BITS 3
 
 #define MAX_TICK 0xFFFFFF
 #define DEBUG_CLK 0

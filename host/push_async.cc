@@ -54,6 +54,10 @@ size_t msg_id = 0;
 
 void on_transfer_complete(struct libusb_transfer *transfer);
 
+#define EIGHT_TO_SIX 0
+
+#if EIGHT_TO_SIX
+#define DATA_MASK 0x7F
 const auto encode_byte = [](uint8_t b) {
   // simple, but works well only for for 0..189
   if (b > 189) {
@@ -64,11 +68,16 @@ const auto encode_byte = [](uint8_t b) {
 
 const auto decode_byte = [](uint8_t b) { return b - (b >> 7); };
 // 4x version: u32 - ((u32 & 0x80808080) >> 7)
+#else
+#define DATA_MASK 0xFF
+const auto encode_byte = [](uint8_t b) { return b; };
+const auto decode_byte = [](uint8_t b) { return b; };
+#endif
 
 void prepareTxBuffer(size_t idx, struct libusb_device_handle *usb_dev) {
   for (size_t i = 0; i < CHUNK_SIZE; ++i) {
     tx_buffers[idx * CHUNK_SIZE + i] =
-        encode_byte(tx_buf[next_offset + i] & 0x7F);
+        encode_byte(tx_buf[next_offset + i] & DATA_MASK);
   }
 
   libusb_fill_bulk_transfer(transfers[idx], usb_dev, /* endpoint */ 0x02,
