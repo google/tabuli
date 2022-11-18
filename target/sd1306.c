@@ -4,10 +4,10 @@
 #include "pico/stdlib.h"
 #include <stdint.h>
 
-#define DEVICE 0x3D
-
 #define SCREEN_LEN (1 + 8 * 128)
 uint8_t screen[SCREEN_LEN];
+
+uint8_t device = 0;
 
 #define SPELL_LEN 25
 uint8_t kSpell[SPELL_LEN] = {0xAE, 0x20, 0x00, 0x40, 0xA1, 0xA8, 0x3F,
@@ -91,7 +91,7 @@ uint8_t kFont[4 * 64] = {
 
 uint32_t sd1306_cmd(uint8_t cmd) {
   uint8_t payload[2] = {0x00, cmd};
-  return i2c_write_blocking(SD1306_I2C, DEVICE, payload, 2, false) == 2;
+  return i2c_write_blocking(SD1306_I2C, device, payload, 2, false) == 2;
 }
 
 void display_clear(void) {
@@ -114,6 +114,13 @@ void display_init(void) {
     gpio_set_drive_strength(SD1306_BASE_PIN + pin, GPIO_DRIVE_STRENGTH_2MA);
     gpio_set_function(SD1306_BASE_PIN + pin, GPIO_FUNC_I2C);
   }
+  uint8_t dummy;
+  device = 0x3C;
+  int result = i2c_read_blocking(SD1306_I2C, device, &dummy, 1, false);
+  if (result == PICO_ERROR_GENERIC) {
+    device++;
+  }
+
   display_reinit(1);
   screen[0] = 0x40;
   display_clear();
@@ -150,5 +157,5 @@ void display_flush(void) {
   for (uint32_t i = 0; i < 6; ++i) {
     sd1306_cmd(payload[i]);
   }
-  i2c_write_blocking(SD1306_I2C, DEVICE, screen, SCREEN_LEN, false);
+  i2c_write_blocking(SD1306_I2C, device, screen, SCREEN_LEN, false);
 }
