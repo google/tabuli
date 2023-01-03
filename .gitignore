@@ -1,2 +1,10 @@
 build*/
+bazel-*
 .cache/
+.vscode/
+
+*.bin
+*.dsf
+*.mp3
+*.mux
+*.raw
