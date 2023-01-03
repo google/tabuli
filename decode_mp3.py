@@ -1,7 +1,8 @@
 import os
 import pydub # python3 -m pip install pydub
 import numpy as np
-import random
+
+SD = 1
 
 src_dir = os.getcwd()
 all_fnames = os.listdir(src_dir)
@@ -12,9 +13,10 @@ mp3_paths = [path for path in file_paths if path.endswith('.mp3')]
 NUM_BRANCHES = 16
 NUM_CH_PER_BRANCH = 16
 NUM_CHANNELS = NUM_BRANCHES * NUM_CH_PER_BRANCH
+PACKET_SIZE = 2 * NUM_CHANNELS
 
 USB_CHUNK_SIZE = 16 * 1024
-USB_ALIGN = int(USB_CHUNK_SIZE / NUM_CHANNELS)
+USB_ALIGN = int(USB_CHUNK_SIZE / PACKET_SIZE)
 
 TARGET_RATE = 44100
 TARGET_LEN_SEC = 60
@@ -42,6 +44,24 @@ for path in mp3_paths:
   samples = samples[:TARGET_LEN].astype('<i4')
   samples += 32768
   samples = samples.astype('<u2')
-  with open(f"{cntr:03}.bin", "wb") as file:
-    file.write(samples.tobytes())
+  if not SD:
+    with open(f"{cntr:03}.bin", "wb") as file:
+      file.write(samples.tobytes())
+  else:
+    # 1 sample -> 64 -> 8 bytes
+    sd_samples = np.zeros(TARGET_LEN * 8, np.uint8)
+    state = 0
+    for i in range(TARGET_LEN):
+      v = samples[i]
+      for by in range(8):
+        b = 0
+        for bi in range(8):
+          b = b >> 1
+          state = state + v
+          if state >= 65536:
+            state = state - 65536
+            b = b | 128
+        sd_samples[i * 8 + by] = b
+    with open(f"{cntr:03}.raw", "wb") as file:
+      file.write(sd_samples.tobytes())
   cntr = cntr + 1

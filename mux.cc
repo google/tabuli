@@ -23,7 +23,8 @@ constexpr size_t CHUNK_SIZE = NUM_ENDPOINTS * 2;
 constexpr size_t USB_CHUNK_SIZE = 16 * 1024;
 constexpr size_t USB_ALIGN = USB_CHUNK_SIZE / PACKET_SIZE;
 
-static_assert((USB_ALIGN & (USB_ALIGN - 1)) == 0);
+static_assert((USB_ALIGN & (USB_ALIGN - 1)) == 0,
+              "USB_ALIGN is not power of two");
 
 constexpr size_t TARGET_RATE = 44100;
 constexpr size_t TARGET_LEN_SEC = 60;
