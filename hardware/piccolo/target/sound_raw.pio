@@ -1,0 +1,6 @@
+.program sound_raw
+
+public entry_point:      ;
+.wrap_target
+    out pins, 1          ;
+.wrap

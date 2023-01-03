@@ -1,0 +1,161 @@
+#include "display.h"
+
+#include "hardware/i2c.h"
+#include "pico/stdlib.h"
+#include <stdint.h>
+
+#define SCREEN_LEN (1 + 8 * 128)
+uint8_t screen[SCREEN_LEN];
+
+uint8_t device = 0;
+
+#define SPELL_LEN 25
+uint8_t kSpell[SPELL_LEN] = {0xAE, 0x20, 0x00, 0x40, 0xA1, 0xA8, 0x3F,
+                             0xC8, 0xD3, 0x00, 0xDA, 0x12, 0xD5, 0x80,
+                             0xD9, 0xF1, 0xDB, 0x30, 0x81, 0xFF, 0xA4,
+                             0xA6, 0x8D, 0x14, 0xAF};
+uint8_t kFont[4 * 64] = {
+    0x00, 0x00, 0x00, 0, //  space
+    0x00, 0x17, 0x00, 0, //  !
+    0x15, 0x0A, 0x15, 0, // "
+    0x15, 0x0A, 0x15, 0, // #
+    0x15, 0x0A, 0x15, 0, // $
+    0x15, 0x0A, 0x15, 0, // %
+    0x15, 0x0A, 0x15, 0, // &
+    0x15, 0x0A, 0x15, 0, // '
+    0x15, 0x0A, 0x15, 0, // (
+    0x15, 0x0A, 0x15, 0, // )
+    0x15, 0x0A, 0x15, 0, // *
+    0x04, 0x0E, 0x04, 0, //  +
+    0x15, 0x0A, 0x15, 0, // ,
+    0x04, 0x04, 0x04, 0, //  -
+    0x15, 0x0A, 0x15, 0, // .
+    0x18, 0x04, 0x03, 0, //  /
+    0x1F, 0x11, 0x1F, 0, //  0
+    0x00, 0x1F, 0x00, 0, //  1
+    0x1D, 0x15, 0x17, 0, //  2
+    0x15, 0x15, 0x1F, 0, //  3
+    0x07, 0x04, 0x1F, 0, //  4
+    0x17, 0x15, 0x1D, 0, //  5
+    0x1F, 0x15, 0x1D, 0, //  6
+    0x01, 0x01, 0x1F, 0, //  7
+    0x1F, 0x15, 0x1F, 0, //  8
+    0x17, 0x15, 0x1F, 0, //  9
+    0x00, 0x0A, 0x00, 0, //  :
+    0x15, 0x0A, 0x15, 0, // ;
+    0x15, 0x0A, 0x15, 0, // <
+    0x0A, 0x0A, 0x0A, 0, //  =
+    0x15, 0x0A, 0x15, 0, // >
+    0x15, 0x0A, 0x15, 0, // ?
+    0x15, 0x0A, 0x15, 0, // @
+    0x1E, 0x05, 0x1E, 0, //  A
+    0x1F, 0x15, 0x0A, 0, //  B
+    0x0E, 0x11, 0x11, 0, //  C
+    0x1F, 0x11, 0x0E, 0, //  D
+    0x1F, 0x15, 0x11, 0, //  E
+    0x1F, 0x05, 0x01, 0, //  F
+    0x15, 0x0A, 0x15, 0, // G
+    0x15, 0x0A, 0x15, 0, // H
+    0x15, 0x0A, 0x15, 0, // I
+    0x15, 0x0A, 0x15, 0, // J
+    0x15, 0x0A, 0x15, 0, // K
+    0x15, 0x0A, 0x15, 0, // L
+    0x15, 0x0A, 0x15, 0, // M
+    0x15, 0x0A, 0x15, 0, // N
+    0x15, 0x0A, 0x15, 0, // O
+    0x15, 0x0A, 0x15, 0, // P
+    0x15, 0x0A, 0x15, 0, // Q
+    0x15, 0x0A, 0x15, 0, // R
+    0x15, 0x0A, 0x15, 0, // S
+    0x15, 0x0A, 0x15, 0, // T
+    0x15, 0x0A, 0x15, 0, // U
+    0x15, 0x0A, 0x15, 0, // V
+    0x15, 0x0A, 0x15, 0, // W
+    0x15, 0x0A, 0x15, 0, // X
+    0x15, 0x0A, 0x15, 0, // Y
+    0x15, 0x0A, 0x15, 0, // Z
+    0x15, 0x0A, 0x15, 0, // [
+    0x15, 0x0A, 0x15, 0, // backslash
+    0x15, 0x0A, 0x15, 0, // ]
+    0x15, 0x0A, 0x15, 0, // ^
+    0x10, 0x10, 0x10, 0  // _
+};
+
+#if !defined(SD1306_I2C)
+#define SD1306_I2C i2c0
+#endif
+
+#if !defined(SD1306_BASE_PIN)
+#define SD1306_BASE_PIN 28
+#endif
+
+uint32_t sd1306_cmd(uint8_t cmd) {
+  uint8_t payload[2] = {0x00, cmd};
+  return i2c_write_blocking(SD1306_I2C, device, payload, 2, false) == 2;
+}
+
+void display_clear(void) {
+  for (uint32_t i = 1; i < SCREEN_LEN; ++i) {
+    screen[i] = 0;
+  }
+}
+
+void display_reinit(int full) {
+  for (uint32_t i = 0; i < SPELL_LEN; ++i) {
+    sd1306_cmd(kSpell[i]);
+  }
+}
+
+void display_init(void) {
+  i2c_init(SD1306_I2C, 1700000);
+  // GPIO requirements: pull-up, slow-slew, schmitt
+  for (uint32_t pin = 0; pin < 2; pin++) {
+    gpio_pull_up(SD1306_BASE_PIN + pin);
+    gpio_set_drive_strength(SD1306_BASE_PIN + pin, GPIO_DRIVE_STRENGTH_2MA);
+    gpio_set_function(SD1306_BASE_PIN + pin, GPIO_FUNC_I2C);
+  }
+  uint8_t dummy;
+  device = 0x3C;
+  int result = i2c_read_blocking(SD1306_I2C, device, &dummy, 1, false);
+  if (result == PICO_ERROR_GENERIC) {
+    device++;
+  }
+
+  display_reinit(1);
+  screen[0] = 0x40;
+  display_clear();
+}
+
+void display_print(uint32_t x, uint32_t y, char *text) {
+  // Actually could be >58, but for simplicity we don't print if top line is
+  // in the last bank.
+  if (y >= 56) return;
+  uint8_t* top_bank = screen + 1 + 128 * (y / 8) + x;
+  uint8_t* bottom_bank = top_bank + 128;
+  uint32_t shift = y & 0x7;
+  uint32_t mask = ~(0x3F << shift);
+  while (*text) {
+    if (x + 4 > 128) return;
+    uint32_t c = (*text - 32) & 0x3F;
+    uint8_t* pixels = kFont + 4 * c;
+    for (uint32_t i = 0; i < 4; ++i) {
+      uint32_t bits = *top_bank | ((*bottom_bank) << 8);
+      bits = (bits & mask) | ((*pixels) << shift);
+      *top_bank = bits;
+      *bottom_bank = bits >> 8;
+      top_bank++;
+      bottom_bank++;
+      pixels++;
+      x++;
+    }
+    text++;
+  }
+}
+
+void display_flush(void) {
+  uint8_t payload[] = {0x21, 0x00, 0x7F, 0x22, 0x00, 0x07};
+  for (uint32_t i = 0; i < 6; ++i) {
+    sd1306_cmd(payload[i]);
+  }
+  i2c_write_blocking(SD1306_I2C, device, screen, SCREEN_LEN, false);
+}

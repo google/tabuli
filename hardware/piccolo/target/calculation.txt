@@ -1,0 +1,55 @@
+420000000 clk/s
+44100 sample/s
+9523.81 clk/sample
+16 channels
+595.2 clk/ch-sample
+-----------------------
+  64 subsamples
+  148.81 clk/subsample
+  9.3 clk/ch-subsample
+-----------------------
+  32 subsamples
+  18.6 clk/ch-subsample
+
+2 PIO x 4 SM
+1 SM == 2ch
+
+4 bit per subsample -> 32 bits == 2ch x 4 subsample
+
+| cmd        | c | x |
++------------+---+---+
+| v = read   | 2 | 1 |
+| q = read   | 2 | 1 |
+| q += v     | 1 | 4 |
+| p = q >>   | 1 | 4 | instead of masking
+| p = s >> p | 1 | 4 |
+| o ror 8    | 1 | 4 | roll output
+| o |= p     | 1 | 4 | save to output
+| q &= m     | 1 | 4 |
+| write q    | 2 | 1 |
+| write o    |1/2| 1 |
+
+r00 r01 r02 r03 r04 r05 r06 r07 r08 r09 r10 r11 r12 lr
+q   o   v   m   p   s
+
+--------------------
+
+hot: 6
+cold: 7+
+total: 6*4+7 = 31 per 4 subsample -> ~7.75 per subsample
+
+Overhead budget:
+149*4-31*16=180; 6.25 per channel
+
+--------------------
+
+if PIO uses 2x32 -> 2ch x 8 subsample:
+total: 5*8+6 = 46 per 8 subsample -> ~5.75 per subsample
+
+Overhead budget:
+149*8-46*16=456; 28.5 per channel
+
+pros: can dump to SM right away
+
+149 clk for 3-bit PWM -> 18 clk per switch plus 5 stale/sync/reload
+TODO: can we use stale to fix pace?

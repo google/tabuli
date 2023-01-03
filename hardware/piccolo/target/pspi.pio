@@ -1,0 +1,45 @@
+.program pspi
+.side_set 2
+
+; OUT      : [MOSI0, ... MOSI15]
+; SIDE_SET : [RESET, SCLK], mandatory, value
+; FIFO TX-joined
+; 14-tick loop (7 low, 7 hi)
+
+.define CLK_LO 0                        ; CS = 0, SCLK = 0
+.define CLK_HI 2                        ; CS = 0, SCLK = 1
+.define RESET_HI 1                      ; CS = 1, SCLK = 1
+.define RESET_LO 1                      ; CS = 1, SCLK = 0
+
+.define PERIOD 14
+.define LO_START 0
+.define LO_PULL 3
+.define LO_SEND 4
+.define LO_DUTY LO_START + LO_PULL + LO_SEND
+.define HI_DUTY PERIOD - LO_DUTY
+tock:
+    nop             side RESET_LO  [LO_DUTY - 1] ; extra delay to retain pace
+
+public entry_point:
+.wrap_target
+    set x, 7        side RESET_HI  [HI_DUTY - 3] ; make sure RESET is at least 6 ticks
+    mov y, status   side RESET_HI  [0] ; wait until FIFO is full
+    jmp y-- tock    side RESET_HI  [0] ; 8 x 32 = 16 x 16
+
+    ;nop             side CLK_LO [LO_START - 1] ;
+loop:
+    pull            side CLK_LO [LO_PULL - 1] ;
+    out pins, 16    side CLK_LO [LO_SEND - 1] ;
+    nop             side CLK_HI [1] ;
+    nop             side CLK_HI [HI_DUTY - 3] ;
+    ;nop             side CLK_LO [LO_START - 1] ;
+    nop             side CLK_LO [LO_PULL - 1] ;
+    out pins, 16    side CLK_LO [LO_SEND - 1] ;
+    nop             side CLK_HI [1] ;
+
+    ;nop             side CLK_HI [HI_DUTY - 3] ;
+    ;jmp x-- loop    side CLK_LO [LO_START - 1] ;
+    jmp x-- loop     side CLK_HI [HI_DUTY - 3] ;
+
+    nop             side CLK_LO [LO_PULL + LO_SEND - 1] ;
+.wrap

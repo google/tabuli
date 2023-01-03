@@ -1,0 +1,47 @@
+.program ft1248
+.side_set 2
+
+; IN       : [D0, ... D7], autopush on 32-bits
+; OUT      : [D0, ... D7] (not used with OSR)
+; SIDE_SET : [SS_N, CLK], mandatory, value
+; JMP      : [MISO]
+; FIFO RX-joined
+
+.define RESET  1                   ; SS_N = 1, CLK = 0
+.define CLK_LO 0                   ; SS_N = 0, CLK = 0
+.define CLK_HI 2                   ; SS_N = 0, CLK = 1
+
+unwind:
+    nop            side CLK_LO [3] ; end of hot loop
+public entry_point:
+reset:
+    mov osr, !null side RESET  [3] ;
+w_fifo:
+    mov x, status  side RESET  [0] ;
+    jmp !x w_fifo  side RESET  [0] ;
+w_data:
+    jmp pin cmd    side RESET  [0] ;
+    jmp w_data     side RESET  [0] ;
+                                   ;
+cmd:
+    nop            side CLK_LO [3] ; Clearance between select and first clk
+
+    out pindirs, 8 side CLK_HI [7] ; Bus turnaround, values are already set
+    nop            side CLK_HI [1] ;
+    mov osr, null  side CLK_LO [2] ;
+    out pindirs, 8 side CLK_LO [0] ; Bus turnaround, just before the next clk
+
+    nop            side CLK_HI [7] ;
+    nop            side CLK_HI [0] ;
+    jmp pin unwind side CLK_HI [0] ; RXF# is up, start the process over
+    nop            side CLK_LO [4] ;
+
+.wrap_target
+    nop            side CLK_HI [7] ;
+    nop            side CLK_HI [0] ;
+    jmp pin unwind side CLK_HI [0] ;
+    nop            side CLK_LO [0] ;
+    in pins, 8     side CLK_LO [0] ;
+    mov x, status  side CLK_LO [0] ; Less than 8 items in FIFO
+    jmp !x reset   side CLK_LO [0] ; If FIFO is full, exit the hot loop
+.wrap

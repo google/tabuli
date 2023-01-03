@@ -1,0 +1,6 @@
+.program drain
+
+public entry_point:                ; start of program
+.wrap_target                       ;
+    pull noblock                   ;
+.wrap                              ;
