@@ -7,7 +7,7 @@ project(piccolo-target C CXX ASM)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
 
-set(USE_DISPLAY 0)
+set(USE_DISPLAY 1)
 
 # 0: RAW
 # 1: SD + DITHER
