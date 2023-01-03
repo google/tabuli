@@ -1,6 +1,6 @@
 ### Overview
 
-In this folder contains projects closely related to hardware. E.g. software that
+This folder contains projects closely related to hardware. E.g. software that
 runs on SBC / MCU, as well as software used to communicate with such
 units; PCB designs; design-docs; hardware simulation modules.
 
