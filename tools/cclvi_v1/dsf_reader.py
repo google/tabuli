@@ -128,7 +128,7 @@ for src_path in dsf_paths:
                 print("Failed to read payload")
                 quit()
 
-    dst_path = f"{cntr:03}.raw"
+    dst_path = f"{cntr:03}.dsd64"
     print(f"Writing {dst_path}")
     with open(dst_path, 'wb') as file:
         file.write(output)

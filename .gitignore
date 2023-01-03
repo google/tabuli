@@ -3,8 +3,8 @@ bazel-*
 .cache/
 .vscode/
 
-*.bin
+*.dsd64
 *.dsf
 *.mp3
 *.mux
-*.raw
+*.pcm16

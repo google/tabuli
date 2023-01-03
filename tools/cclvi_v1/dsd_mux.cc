@@ -70,7 +70,7 @@ int main(int argc, char **argv) {
   std::vector<std::vector<uint8_t>> input;
   for (const auto &entry : std::__fs::filesystem::directory_iterator(".")) {
     absl::string_view path = entry.path().c_str();
-    if (!absl::EndsWith(path, ".raw")) {
+    if (!absl::EndsWith(path, ".dsd64")) {
       continue;
     }
     fprintf(stderr, "Loading %s\n", path.cbegin());

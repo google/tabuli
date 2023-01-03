@@ -65,7 +65,7 @@ int main(int argc, char **argv) {
   std::vector<std::vector<uint16_t>> input;
   for (const auto &entry : std::__fs::filesystem::directory_iterator(".")) {
     absl::string_view path = entry.path().c_str();
-    if (!absl::EndsWith(path, ".bin")) {
+    if (!absl::EndsWith(path, ".pcm16")) {
       continue;
     }
     fprintf(stderr, "Loading %s\n", path.cbegin());

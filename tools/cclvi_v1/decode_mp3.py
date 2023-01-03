@@ -45,7 +45,7 @@ for path in mp3_paths:
   samples += 32768
   samples = samples.astype('<u2')
   if not SD:
-    with open(f"{cntr:03}.bin", "wb") as file:
+    with open(f"{cntr:03}.pcm16", "wb") as file:
       file.write(samples.tobytes())
   else:
     # 1 sample -> 64 -> 8 bytes
@@ -62,6 +62,6 @@ for path in mp3_paths:
             state = state - 65536
             b = b | 128
         sd_samples[i * 8 + by] = b
-    with open(f"{cntr:03}.raw", "wb") as file:
+    with open(f"{cntr:03}.dsd64", "wb") as file:
       file.write(sd_samples.tobytes())
   cntr = cntr + 1
