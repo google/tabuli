@@ -1,0 +1,157 @@
+#!/usr/bin/env python
+
+# Copyright 2024 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Usage: ./audio_closed_loop input.wav recorded.wav [<beep peak in dBFS> [<playback device> [<recording device>]]]
+"""
+
+import argparse
+import signal
+import subprocess
+import sys
+import tempfile
+
+import numpy as np
+import soundfile as sf
+
+
+def detect_offset(samples: np.ndarray, sample_rate: int) -> int:
+  """Helps trim a recording that starts with a synchronization beep.
+
+  Args:
+      samples (np.ndarray): The audio samples, of shape (num_samples,).
+      sample_rate (int): The sample rate in Hz.
+
+  Returns:
+      How many samples to remove from the beginning to get exactly to the peak
+      of the synchronization sound.
+  """
+  if samples.shape[0] < 0.01 * sample_rate:
+    raise ValueError
+
+  kernel = (-2.) ** -np.abs(np.arange(-24, 24 + 1))
+  samples = np.convolve(samples, kernel, mode='same')
+
+  # Require the beep to be at least 10dB above the background noise in amplitude
+  min_ratio = 10**(10/20)
+  max_background = max(1e-7, np.max(np.abs(samples[:int(0.002 * sample_rate)])))
+  max_above = None
+  last_above = None
+  for i in range(int(0.002 * sample_rate), samples.shape[0]):
+    if np.abs(samples[i]) >= min_ratio * max_background:
+      last_above = i
+      if max_above is None or np.abs(samples[i]) >= np.abs(samples[max_above]):
+        max_above = i
+
+    if last_above is not None and last_above < i - int(0.002 * sample_rate):
+      return max_above
+
+  raise ValueError
+
+
+if __name__ == '__main__':
+  parser = argparse.ArgumentParser(prog='audio_closed_loop')
+  parser.add_argument('input', metavar='input.wav')
+  parser.add_argument('--write_recorded_to', metavar='recorded.wav')
+  parser.add_argument('--write_recorded_trimmed_to', metavar='recorded_trimmed.wav')
+  parser.add_argument('--norm', type=float, default=-28)
+  parser.add_argument('-b', '--beep_peak', type=float, default=-3)
+  parser.add_argument('-c', '--channel', type=int, default=5, help="in which output channel to place the audio")
+  parser.add_argument('-n', '--num_channels', type=int, default=20)
+  parser.add_argument('--num_recording_channels', type=int, default=18)
+  parser.add_argument('-m', '--microphone', type=int, default=1, help="channel of the microphone")
+  parser.add_argument('-f', '--flip', action=argparse.BooleanOptionalAction, default=True)
+  parser.add_argument('--driver_model', required=True)
+  parser.add_argument('--spectrum_similarity', required=True)
+  parser.add_argument('-p', '--playback_device',
+                      default='hw:CARD=UMC1820,DEV=0')
+  parser.add_argument('-r', '--recording_device',
+                      default='hw:CARD=UMC1820,DEV=0')
+  args = parser.parse_args()
+
+  beep_peak_dBFS = args.beep_peak
+  beep_peak = 10**(beep_peak_dBFS / 20)
+  norm_dBFS = args.norm
+  norm = 10**(norm_dBFS / 20)
+  ramp_size = 24
+
+  recording_frequency = 48000
+
+  input_data, samplerate = sf.read(args.input)
+  if len(input_data.shape) > 1:
+    print(f"expected mono input, got {input_data.shape[1]} channels", file=sys.stderr)
+    sys.exit(1)
+
+  if samplerate != recording_frequency:
+    print(f"expected {recording_frequency}Hz input, got {samplerate}Hz", file=sys.stderr)
+    sys.exit(1)
+
+  input_data = np.pad(input_data, (int(0.01 * samplerate), 0))
+  half_second = np.arange(samplerate // 2)
+  input_data[int(0.005 * samplerate) - ramp_size : int(0.005 * samplerate) + ramp_size + 1] = beep_peak * (-2.) ** -np.abs(np.arange(-ramp_size, ramp_size + 1))
+  input_data *= norm
+
+  prefixed_with_beep = tempfile.NamedTemporaryFile(suffix='.wav')
+  sf.write(prefixed_with_beep, input_data, samplerate, subtype='PCM_24')
+
+  modeled_with_beep = tempfile.NamedTemporaryFile(suffix='.wav')
+  subprocess.run([args.driver_model, prefixed_with_beep.name, modeled_with_beep.name], check=True)
+  prefixed_with_beep.close()
+
+  for_speakers = tempfile.NamedTemporaryFile(suffix='.wav')
+  remix = ['0'] * args.num_channels
+  remix[args.channel - 1] = '1'
+  subprocess.run(['sox', modeled_with_beep.name, for_speakers.name, 'remix', *remix, 'norm', str(args.norm)], check=True)
+  modeled_with_beep.close()
+
+  if args.write_recorded_to is None:
+    recorded_with_beep = tempfile.NamedTemporaryFile(suffix='.wav')
+    write_recorded_to = recorded_with_beep.name
+  else:
+    write_recorded_to = args.write_recorded_to
+  record_process = subprocess.Popen(['arecord', f'-c{args.num_recording_channels}', '-f', 'S32_LE', f'-r{recording_frequency}', '-D', args.recording_device, write_recorded_to])
+
+  play = subprocess.run(['aplay', '-D', args.playback_device, for_speakers.name])
+  if play.returncode != 0:
+    record_process.terminate()
+    sys.exit(play.returncode)
+
+  record_process.send_signal(signal.SIGINT)
+  for_speakers.close()
+  record_process.wait()
+
+  recorded_samples, recorded_samplerate = sf.read(write_recorded_to, always_2d=True)
+  if args.flip:
+    recorded_samples = -recorded_samples
+
+  if args.write_recorded_trimmed_to is None:
+    recorded_trimmed = tempfile.NamedTemporaryFile(suffix='.wav')
+    write_recorded_trimmed_to = recorded_trimmed.name
+  else:
+    write_recorded_trimmed_to = args.write_recorded_trimmed_to
+
+  try:
+    offset = detect_offset(recorded_samples[:, args.microphone - 1], recorded_samplerate)
+    print(f"Beep detected {offset / recorded_samplerate} seconds into the recording")
+    sf.write(write_recorded_trimmed_to, recorded_samples[offset + int(0.005 * recording_frequency):, args.microphone - 1], recorded_samplerate, subtype='PCM_24')
+  except ValueError:
+    print("No beep detected, writing the recorded audio as-is", file=sys.stderr)
+    if args.write_recorded_trimmed_to is not None:
+      sf.write(write_recorded_trimmed_to, recorded_samples, recorded_samplerate, subtype='PCM_24')
+    sys.exit(17)
+
+  similarity = subprocess.run([args.spectrum_similarity, args.input, write_recorded_trimmed_to], check=True, capture_output=True)
+
+  print(f"score={similarity.stdout.decode('ascii').strip()}")
