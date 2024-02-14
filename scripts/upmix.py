@@ -78,7 +78,7 @@ run("sox /tmp/16speakers.wav -e float -b 32 /tmp/down3-20.wav remix 0 0 1v3 2v3 
 
 run("./build/driver_model /tmp/down3-20.wav /tmp/down3-mod.wav")
 
-run("sox /tmp/down3-mod.wav -b 24 /tmp/down3-norm.wav norm -40");
+run("sox /tmp/down3-mod.wav -b 24 /tmp/down3-norm.wav treble -4 10000 norm -40");
 
 run("amixer --card 2 cset numid=3,iface=MIXER,name='UMC1820 Output Playback Volume' 127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127")
 run("amixer --card 2 cset numid=1,iface=MIXER,name='UMC1820 Output Playback Switch' on,on,on,on,on,on,on,on,on,on,on,on,on,on,on,on")
