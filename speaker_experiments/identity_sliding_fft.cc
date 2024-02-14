@@ -29,25 +29,7 @@
 
 namespace {
 
-constexpr int kSubSourcePrecision = 1000;
-
-double MicrophoneResponse(const double angle) {
-  return 0.5f * (2.0f + std::cos(angle));
-}
-
-double ExpectedLeftToRightRatio(const double angle) {
-  return (1e-3 + MicrophoneResponse(angle + M_PI / 4)) /
-         (1e-3 + MicrophoneResponse(angle - M_PI / 4));
-}
-
-double ActualLeftToRightRatio(const double squared_left,
-                              const double squared_right) {
-  return std::sqrt((1e-13 + squared_left) / (1e-13 + squared_right));
-}
-
 double FindMedian3xLeaker(double window) {
-  // TODO(jyrki): This function needs more work.
-  // return -2.0/log(window);  // Faster approximate function.
   double half_way_to_total_sum = 1e300;
   for (int k = 0; k < 2; ++k) {
     double sum = 0;
@@ -61,7 +43,8 @@ double FindMedian3xLeaker(double window) {
       v1 *= window;
       v2 *= window;
 
-      sum += v2 * v2;
+      double amp = v2;
+      sum += v2 * amp;
       if (sum >= half_way_to_total_sum) {
         return i;
       }
@@ -71,33 +54,8 @@ double FindMedian3xLeaker(double window) {
   return 65000;
 }
 
-double CalcReverbRatio(double frequency) {
-  if (frequency < 500) {
-    return 0;  // no low frequency reverb
-  }
-  if (frequency < 1000) {
-    return (frequency - 500.0) / 500.0;  // ramp up to full reverb at 1 kHz
-  }
-  if (frequency < 1500) {
-    return 1.0;  // full
-  }
-  if (frequency < 2500) {
-    return 1.0 - 0.5 * fabs(frequency - 2000) / 500;  // dip here for 'notch'
-  }
-  if (frequency < 4000) {
-    return 1.0;  // full
-  }
-  if (frequency < 6000) {
-    return 0.1 + 0.9 * (6000 - frequency) / 2000;  // slope down 4 kHz to 6 kHz
-  }
-  if (frequency < 10000) {
-    return 0.1 * (10000 - frequency) / 4000;  // slope down 6 kHz to 10 kHz
-  }
-  return 0;
-}
-
 struct Rotator {
-  std::complex<double> rot[5] = {{1, 0}, 0};
+  std::complex<double> rot[4] = {{1, 0}, 0};
   double window = 0.9999;  // at 40 Hz.
   double windowM1 = 1 - window;
   double windowD = 0.99995;
@@ -109,7 +67,6 @@ struct Rotator {
 
   Rotator(double frequency, const double sample_rate) {
     window = pow(window, std::max(1.0, frequency / 40.0));
-    windowD = pow(windowD, std::max(1.0, frequency / 2000.0));
     advance = 40000 - FindMedian3xLeaker(window);
     if (advance < 1) {
       advance = 1;
@@ -118,62 +75,25 @@ struct Rotator {
       advance = 0xfff0;
     }
     windowM1 = 1.0 - window;
-    windowDM1 = 1.0 - windowD;
     frequency *= 2 * M_PI / sample_rate;
     exp_mia = {std::cos(frequency), -std::sin(frequency)};
-    reverb_ratio = CalcReverbRatio(frequency);
   }
 
   void Increment(double audio) {
-    audio *= 0.01;
+    audio *= 0.3;
     rot[0] *= exp_mia;
     rot[1] *= window;
     rot[2] *= window;
     rot[3] *= window;
-    rot[4] *= windowD;
 
     rot[1] += windowM1 * audio * rot[0];
     rot[2] += windowM1 * rot[1];
     rot[3] += windowM1 * rot[2];
-    rot[4] += windowDM1 * sqrt(std::norm(rot[3]));
     ix++;
   }
-  void GetSample(double* v) {
-    double excess = (1.0 * sqrt(std::norm(rot[4]))) - sqrt((std::norm(rot[3])));
-    if (excess < 0) {
-      excess = 0;
-    }
-    float ratio_to_excess_init =
-        -excess / (sqrt(std::norm(rot[3])) + sqrt(std::norm(rot[4])) + 1e-8);
-
-    float ratio_to_excess = exp(8 * ratio_to_excess_init);  // most dry sound
-    float ratio_to_excess2 =
-        exp(2 * ratio_to_excess_init);  // slightly less dry
-    if (ratio_to_excess < 0) {
-      ratio_to_excess = 0;
-    }
-    if (ratio_to_excess >= 1) {
-      ratio_to_excess = 1;
-    }
-    if (ratio_to_excess2 < 0) {
-      ratio_to_excess2 = 0;
-    }
-    if (ratio_to_excess2 >= 1) {
-      ratio_to_excess2 = 1;
-    }
-    double val = rot[0].real() * rot[3].real() + rot[0].imag() * rot[3].imag();
-
-    v[0] = ratio_to_excess * val;
-    v[1] = (ratio_to_excess2 - ratio_to_excess) * val;
-    v[2] = (1.0 - ratio_to_excess2) * val;
-
-    // Bring some of reverbed sound from v[1] and v[2] back to non-reverbed
-    // v[0] depending on the reverb_ratio.
-    v[0] += (1.0 - reverb_ratio) * (v[1] + v[2]);
-    v[1] *= reverb_ratio;
-    v[2] *= reverb_ratio;
+  double GetSample() const {
+    return rot[0].real() * rot[3].real() + rot[0].imag() * rot[3].imag();
   }
-  double SquaredAmplitude() const { return std::norm(rot[3]); }
 };
 
 double BarkFreq(double v) {
@@ -233,17 +153,11 @@ class TaskExecutor {
 
         rot_left_[my_task].Increment(delayed_r);
         rot_right_[my_task].Increment(delayed_g);
-        double left[3] = {0};
-        double right[3] = {0};
-        rot_left_[my_task].GetSample(&left[0]);
-        rot_right_[my_task].GetSample(&right[0]);
+        double left = rot_left_[my_task].GetSample();
+        double right = rot_right_[my_task].GetSample();
 
-        thread_output[i * output_channels_ + 0] += left[0];
-        thread_output[i * output_channels_ + 1] += right[0];
-        thread_output[i * output_channels_ + 2] += left[1];
-        thread_output[i * output_channels_ + 3] += right[1];
-        thread_output[i * output_channels_ + 4] += left[2];
-        thread_output[i * output_channels_ + 5] += right[2];
+        thread_output[i * output_channels_ + 0] += left;
+        thread_output[i * output_channels_ + 1] += right;
       }
     }
   }
@@ -280,17 +194,6 @@ void Process(
     rot_right.emplace_back(frequency, input_stream.samplerate());
   }
 
-  std::vector<double> speaker_to_ratio_table;
-  speaker_to_ratio_table.reserve(kSubSourcePrecision * (output_channels - 1) +
-                                 1);
-  for (int i = 0; i < kSubSourcePrecision * (output_channels - 1) + 1; ++i) {
-    const double x_div_interval = static_cast<double>(i) / kSubSourcePrecision -
-                                  0.5f * (output_channels - 1);
-    const double x_div_distance = x_div_interval / distance_to_interval_ratio;
-    const double angle = std::atan(x_div_distance);
-    speaker_to_ratio_table.push_back(ExpectedLeftToRightRatio(angle));
-  }
-
   TaskExecutor pool(40, output_channels);
 
   start_progress();
@@ -322,7 +225,7 @@ void Process(
 
 }  // namespace
 
-ABSL_FLAG(int, output_channels, 6, "number of output channels");
+ABSL_FLAG(int, output_channels, 2, "number of output channels");
 ABSL_FLAG(double, distance_to_interval_ratio, 4,
           "ratio of (distance between microphone and source array) / (distance "
           "between each source); default = 40cm / 10cm = 4");
