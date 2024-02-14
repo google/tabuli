@@ -38,7 +38,7 @@ using FFTWUniquePtr = std::unique_ptr<T, FFTWDeleter>;
 float SquaredNorm(const fftwf_complex c) { return c[0] * c[0] + c[1] * c[1]; }
 
 float MicrophoneResponse(const float angle) {
-  return 0.5f * (2.5f + std::cos(angle));
+  return 0.5f * (1.25f + std::cos(angle));
 }
 
 float ExpectedLeftToRightRatio(const float angle) {
@@ -124,6 +124,17 @@ void Process(
                            speaker_to_ratio_table.end(), ratio,
                            std::greater<>()) -
           speaker_to_ratio_table.begin();
+
+      // amp-kludge to make borders louder -- it is a virtual line array where the
+      // borders will be further away in rendering, so let's compensate for it here.
+
+      float distance_from_center = (subspeaker_index - 0.5 * (output_channels - 1));
+      float assumed_distance_to_line = 0.75 * (output_channels - 1);
+      float distance_to_virtual = sqrt(distance_from_center * distance_from_center +
+                                       assumed_distance_to_line * assumed_distance_to_line);
+      float dist_ratio = distance_to_virtual * (1.0f / assumed_distance_to_line);
+      float amp = dist_ratio * dist_ratio;
+
       const float index =
           static_cast<float>(subspeaker_index) / kSubSourcePrecision;
       float integral_index_f;
@@ -132,21 +143,16 @@ void Process(
       const fftwf_complex source_coefficient = {
           0.5f * (input_fft[2 * i][0] + input_fft[2 * i + 1][0]),
           0.5f * (input_fft[2 * i][1] + input_fft[2 * i + 1][1])};
-      if (fractional_index < 1.f / (2 * kSubSourcePrecision)) {
-        std::copy_n(source_coefficient, 2,
-                    output_fft[i * output_channels + integral_index]);
-      } else {
-        const float a = 1 - fractional_index;
-        const float b = fractional_index;
-        output_fft[i * output_channels + integral_index][0] =
-            a * source_coefficient[0];
-        output_fft[i * output_channels + integral_index][1] =
-            a * source_coefficient[1];
-        output_fft[i * output_channels + integral_index + 1][0] =
-            b * source_coefficient[0];
-        output_fft[i * output_channels + integral_index + 1][1] =
-            b * source_coefficient[1];
-      }
+      const float a = amp * (1 - fractional_index);
+      const float b = amp * (fractional_index);
+      output_fft[i * output_channels + integral_index][0] =
+          a * source_coefficient[0];
+      output_fft[i * output_channels + integral_index][1] =
+          a * source_coefficient[1];
+      output_fft[i * output_channels + integral_index + 1][0] =
+          b * source_coefficient[0];
+      output_fft[i * output_channels + integral_index + 1][1] =
+          b * source_coefficient[1];
     }
 
     fftwf_execute(output_ifft);
@@ -186,7 +192,7 @@ void Process(
 
 ABSL_FLAG(int, overlap, 64, "how much to overlap the FFTs");
 ABSL_FLAG(int, window_size, 4096, "FFT window size");
-ABSL_FLAG(int, output_channels, 12, "number of output channels");
+ABSL_FLAG(int, output_channels, 120, "number of output channels");
 ABSL_FLAG(float, distance_to_interval_ratio, 4,
           "ratio of (distance between microphone and source array) / (distance "
           "between each source); default = 40cm / 10cm = 4");
@@ -202,7 +208,7 @@ int main(int argc, char** argv) {
 
   QCHECK_EQ(window_size % overlap, 0);
 
-  QCHECK_EQ(argc, 3) << "Usage: " << argv[0] << " <input> <output>";
+  //  QCHECK_EQ(argc, 3) << "Usage: " << argv[0] << " <input> <output>";
 
   SndfileHandle input_file(argv[1]);
   QCHECK(input_file) << input_file.strError();
