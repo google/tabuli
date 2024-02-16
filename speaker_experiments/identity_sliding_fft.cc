@@ -56,9 +56,11 @@ int FindMedian3xLeaker(double window) {
   */
 }
 
+constexpr int64_t kNumRotators = 128;
+
 struct Rotator {
   std::complex<double> rot[4] = {{1, 0}, 0};
-  double window = 0.9999;  // at 40 Hz.
+  double window = std::pow(0.9996, 128.0/kNumRotators);  // at 40 Hz.
   double windowM1 = 1 - window;
   std::complex<double> exp_mia;
   int advance = 0;
@@ -142,11 +144,11 @@ class TaskExecutor {
       std::vector<double>& thread_output = thread_outputs_[thread];
       for (int i = 0; i < read_; ++i) {
         int delayed_ix = total_ + i - rot_left_[my_task].advance;
+        float delayed_l = history_[2 * (delayed_ix & kHistoryMask) + 1];
         float delayed_r = history_[2 * (delayed_ix & kHistoryMask) + 0];
-        float delayed_g = history_[2 * (delayed_ix & kHistoryMask) + 1];
 
-        rot_left_[my_task].Increment(delayed_r);
-        rot_right_[my_task].Increment(delayed_g);
+        rot_left_[my_task].Increment(delayed_l);
+        rot_right_[my_task].Increment(delayed_r);
         double left = rot_left_[my_task].GetSample();
         double right = rot_right_[my_task].GetSample();
 
@@ -178,7 +180,6 @@ void Process(
   std::vector<double> output(output_channels * kBlockSize);
 
   std::vector<Rotator> rot_left, rot_right;
-  constexpr int64_t kNumRotators = 512;
   rot_left.reserve(kNumRotators);
   rot_right.reserve(kNumRotators);
   for (int i = 0; i < kNumRotators; ++i) {
