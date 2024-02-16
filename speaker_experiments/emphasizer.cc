@@ -46,29 +46,7 @@ double ActualLeftToRightRatio(const double squared_left,
 }
 
 double FindMedian3xLeaker(double window) {
-  // TODO(jyrki): This function needs more work.
-  // return -2.0/log(window);  // Faster approximate function.
-  double half_way_to_total_sum = 1e300;
-  for (int k = 0; k < 2; ++k) {
-    double sum = 0;
-    double v0 = 1;
-    double v1 = 0;
-    double v2 = 0;
-    for (int i = 0; i < 65000; ++i) {
-      v1 += v0;
-      v2 += v1;
-      v0 *= window;
-      v1 *= window;
-      v2 *= window;
-
-      sum += v2 * v2;
-      if (sum >= half_way_to_total_sum) {
-        return i;
-      }
-    }
-    half_way_to_total_sum = 0.445 * sum;  // Sounds better when not quite half.
-  }
-  return 65000;
+  return static_cast<int>(-2.32/log(window));  // Approximate filter delay.
 }
 
 double CalcReverbRatio(double frequency) {
@@ -98,7 +76,7 @@ double CalcReverbRatio(double frequency) {
 
 struct Rotator {
   std::complex<double> rot[5] = {{1, 0}, 0};
-  double window = 0.9999;  // at 40 Hz.
+  double window = 0.9996;  // at 40 Hz.
   double windowM1 = 1 - window;
   double windowD = 0.99995;
   double windowDM1 = 1 - windowD;
@@ -270,7 +248,7 @@ void Process(
   std::vector<double> output(output_channels * kBlockSize);
 
   std::vector<Rotator> rot_left, rot_right;
-  constexpr int64_t kNumRotators = 512;
+  constexpr int64_t kNumRotators = 128;
   rot_left.reserve(kNumRotators);
   rot_right.reserve(kNumRotators);
   for (int i = 0; i < kNumRotators; ++i) {
