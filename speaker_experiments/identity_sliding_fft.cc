@@ -29,45 +29,43 @@
 
 namespace {
 
-double FindMedian3xLeaker(double window) {
-  double half_way_to_total_sum = 1e300;
+int FindMedian3xLeaker(double window) {
+  return static_cast<int>(-2.32/log(window));  // Approximate filter delay.
+  /*
+  double windowM1 = 1.0 - window;
+  double half_way_to_total_sum = 1e99;
   for (int k = 0; k < 2; ++k) {
     double sum = 0;
-    double v0 = 1;
-    double v1 = 0;
-    double v2 = 0;
+    double rot1 = 1;
+    double rot2 = 0;
+    double rot3 = 0;
     for (int i = 0; i < 65000; ++i) {
-      v1 += v0;
-      v2 += v1;
-      v0 *= window;
-      v1 *= window;
-      v2 *= window;
-
-      double amp = v2;
-      sum += v2 * amp;
+      rot1 *= window;
+      rot2 *= window;
+      rot3 *= window;
+      rot2 += windowM1 * rot1;
+      rot3 += windowM1 * rot2;
+      sum += rot3 * rot3;
       if (sum >= half_way_to_total_sum) {
         return i;
       }
     }
-    half_way_to_total_sum = 0.445 * sum;  // Sounds better when not quite half.
+    half_way_to_total_sum = 0.5 * sum;
   }
-  return 65000;
+  abort();
+  */
 }
 
 struct Rotator {
   std::complex<double> rot[4] = {{1, 0}, 0};
   double window = 0.9999;  // at 40 Hz.
   double windowM1 = 1 - window;
-  double windowD = 0.99995;
-  double windowDM1 = 1 - windowD;
   std::complex<double> exp_mia;
-  int ix = 0;
-  double advance = 0;
-  double reverb_ratio = 0;
+  int advance = 0;
 
   Rotator(double frequency, const double sample_rate) {
     window = pow(window, std::max(1.0, frequency / 40.0));
-    advance = 40000 - FindMedian3xLeaker(window);
+    advance = 65000 - FindMedian3xLeaker(window);
     if (advance < 1) {
       advance = 1;
     }
@@ -80,7 +78,6 @@ struct Rotator {
   }
 
   void Increment(double audio) {
-    audio *= 0.3;
     rot[0] *= exp_mia;
     rot[1] *= window;
     rot[2] *= window;
@@ -89,7 +86,6 @@ struct Rotator {
     rot[1] += windowM1 * audio * rot[0];
     rot[2] += windowM1 * rot[1];
     rot[3] += windowM1 * rot[2];
-    ix++;
   }
   double GetSample() const {
     return rot[0].real() * rot[3].real() + rot[0].imag() * rot[3].imag();
@@ -97,8 +93,6 @@ struct Rotator {
 };
 
 double BarkFreq(double v) {
-  // should be larger for human hearing, around 0.165, but bass quality seems to
-  // suffer
   constexpr double linlogsplit = 0.1;
   if (v < linlogsplit) {
     return 20.0 + (v / linlogsplit) * 20.0;  // Linear 20-40 Hz.
@@ -175,7 +169,7 @@ class TaskExecutor {
 
 template <typename In, typename Out>
 void Process(
-    const int output_channels, const double distance_to_interval_ratio,
+    const int output_channels,
     In& input_stream, Out& output_stream,
     const std::function<void()>& start_progress = [] {},
     const std::function<void(int64_t)>& set_progress = [](int64_t written) {}) {
@@ -226,16 +220,11 @@ void Process(
 }  // namespace
 
 ABSL_FLAG(int, output_channels, 2, "number of output channels");
-ABSL_FLAG(double, distance_to_interval_ratio, 4,
-          "ratio of (distance between microphone and source array) / (distance "
-          "between each source); default = 40cm / 10cm = 4");
 
 int main(int argc, char** argv) {
   absl::ParseCommandLine(argc, argv);
 
   const int output_channels = absl::GetFlag(FLAGS_output_channels);
-  const double distance_to_interval_ratio =
-      absl::GetFlag(FLAGS_distance_to_interval_ratio);
 
   QCHECK_EQ(argc, 3) << "Usage: " << argv[0] << " <input> <output>";
 
@@ -248,7 +237,6 @@ int main(int argc, char** argv) {
       argv[2], /*mode=*/SFM_WRITE, /*format=*/SF_FORMAT_WAV | SF_FORMAT_PCM_24,
       /*channels=*/output_channels, /*samplerate=*/input_file.samplerate());
 
-  Process(
-      output_channels, distance_to_interval_ratio, input_file, output_file,
+  Process(output_channels, input_file, output_file,
       [] {}, [](const int64_t written) {});
 }

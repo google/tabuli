@@ -74,7 +74,7 @@ run("sox -m /tmp/down-wetter-angular.wav /tmp/down-wet-angular.wav /tmp/down-dry
 
 run("./build/virtual_speakers --input_file /tmp/down36.wav --num_speakers=16 --output_file=/tmp/16speakers.wav --speaker_separation=0.1 --virtual_speaker_positions '" + ";".join(["%g,-9" % ((i - 300)*0.1 + 0.05) for i in range(600)]) + "'")
 
-run("sox /tmp/16speakers.wav -e float -b 32 /tmp/down3-20.wav remix 0 0 1v3 2v3 3v1 4v1 5v1 6v1 7v1 8v1 0 0 9v1.3 10v1.3 11v1.3 12v1.3 13v1.3 14v1.3 15v3.9 16v3.9")
+run("sox /tmp/16speakers.wav -e float -b 32 /tmp/down3-20.wav remix 0 0 1v1 2v1 3v1 4v1 5v1 6v1 7v1 8v1 0 0 9v1.3 10v1.3 11v1.3 12v1.3 13v1.3 14v1.3 15v1.3 16v1.3")
 
 run("./build/driver_model /tmp/down3-20.wav /tmp/down3-mod.wav")
 
