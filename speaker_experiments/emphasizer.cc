@@ -239,7 +239,7 @@ class TaskExecutor {
 
 template <typename In, typename Out>
 void Process(
-    const int output_channels, const double distance_to_interval_ratio,
+    const int output_channels,
     In& input_stream, Out& output_stream,
     const std::function<void()>& start_progress = [] {},
     const std::function<void(int64_t)>& set_progress = [](int64_t written) {}) {
@@ -256,17 +256,6 @@ void Process(
         BarkFreq(static_cast<double>(i) / (kNumRotators - 1));
     rot_left.emplace_back(frequency, input_stream.samplerate());
     rot_right.emplace_back(frequency, input_stream.samplerate());
-  }
-
-  std::vector<double> speaker_to_ratio_table;
-  speaker_to_ratio_table.reserve(kSubSourcePrecision * (output_channels - 1) +
-                                 1);
-  for (int i = 0; i < kSubSourcePrecision * (output_channels - 1) + 1; ++i) {
-    const double x_div_interval = static_cast<double>(i) / kSubSourcePrecision -
-                                  0.5f * (output_channels - 1);
-    const double x_div_distance = x_div_interval / distance_to_interval_ratio;
-    const double angle = std::atan(x_div_distance);
-    speaker_to_ratio_table.push_back(ExpectedLeftToRightRatio(angle));
   }
 
   TaskExecutor pool(40, output_channels);
@@ -301,16 +290,11 @@ void Process(
 }  // namespace
 
 ABSL_FLAG(int, output_channels, 6, "number of output channels");
-ABSL_FLAG(double, distance_to_interval_ratio, 4,
-          "ratio of (distance between microphone and source array) / (distance "
-          "between each source); default = 40cm / 10cm = 4");
 
 int main(int argc, char** argv) {
   absl::ParseCommandLine(argc, argv);
 
   const int output_channels = absl::GetFlag(FLAGS_output_channels);
-  const double distance_to_interval_ratio =
-      absl::GetFlag(FLAGS_distance_to_interval_ratio);
 
   QCHECK_EQ(argc, 3) << "Usage: " << argv[0] << " <input> <output>";
 
@@ -324,6 +308,6 @@ int main(int argc, char** argv) {
       /*channels=*/output_channels, /*samplerate=*/input_file.samplerate());
 
   Process(
-      output_channels, distance_to_interval_ratio, input_file, output_file,
+      output_channels, input_file, output_file,
       [] {}, [](const int64_t written) {});
 }

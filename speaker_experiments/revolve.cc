@@ -230,7 +230,7 @@ void Process(
   std::vector<double> output(output_channels * kBlockSize);
 
   std::vector<Rotator> rot_left, rot_right;
-  constexpr int64_t kNumRotators = 256;
+  constexpr int64_t kNumRotators = 128;
   rot_left.reserve(kNumRotators);
   rot_right.reserve(kNumRotators);
   for (int i = 0; i < kNumRotators; ++i) {
