@@ -26,12 +26,20 @@
 #include "absl/flags/parse.h"
 #include "absl/log/check.h"
 
+ABSL_FLAG(int, output_channels, 120, "number of output channels");
+ABSL_FLAG(double, distance_to_interval_ratio, 40,
+          "ratio of (distance between microphone and source array) / (distance "
+          "between each source); default = 40cm / 10cm = 4");
+
+
 namespace {
 
 constexpr int kSubSourcePrecision = 1000;
 
+float SquaredNorm(const std::complex<double> c) { return std::norm(c); }
+
 double MicrophoneResponse(const double angle) {
-  return 0.5f * (1.f + std::cos(angle));
+  return 0.5f * (1.25f + std::cos(angle));
 }
 
 double ExpectedLeftToRightRatio(const double angle) {
@@ -39,48 +47,27 @@ double ExpectedLeftToRightRatio(const double angle) {
          (1e-3 + MicrophoneResponse(angle - M_PI / 4));
 }
 
-double ActualLeftToRightRatio(const double squared_left,
-                              const double squared_right) {
-  return std::sqrt((1e-13 + squared_left) / (1e-13 + squared_right));
+float ActualLeftToRightRatio(const std::complex<double> left,
+                             const std::complex<double> right) {
+  return std::sqrt((1e-3 + SquaredNorm(left)) / (1e-3 + SquaredNorm(right)));
 }
 
 double FindMedian3xLeaker(double window) {
-  // return -2.58/log(window);  // Faster approximate function.
-  double half_way_to_total_sum = 1e300;
-  for (int k = 0; k < 2; ++k) {
-    double sum = 0;
-    double v0 = 1;
-    double v1 = 0;
-    double v2 = 0;
-    double prev_v2 = 0;
-    for (int i = 0; i < 65000; ++i) {
-      v1 += v0;
-      v2 += v1;
-      v0 *= window;
-      v1 *= window;
-      v2 *= window;
-      sum += v2;
-      prev_v2 = v2;
-      if (sum >= half_way_to_total_sum) {
-        return i;
-      }
-    }
-    half_way_to_total_sum = 0.45 * sum;  // Sounds better when not quite half.
-  }
-  return 65000;
+  return -2.32/log(window);  // Faster approximate function.
 }
+
+constexpr int64_t kNumRotators = 128;
 
 struct Rotator {
   std::complex<double> rot[4] = {{1, 0}, 0};
-  double window = 0.99963;  // at 200 Hz.
+  double window = std::pow(0.9996, 128.0/kNumRotators);  // at 40 Hz.
   double windowM1 = 1 - window;
   std::complex<double> exp_mia;
-  int ix = 0;
-  double advance = 0;
+  int advance = 0;
 
   Rotator(double frequency, const double sample_rate) {
-    window = pow(window, std::max(1.0, frequency / 200.0));
-    advance = 40000 - FindMedian3xLeaker(window);
+    window = pow(window, std::max(1.0, frequency / 40.0));
+    advance = 65000 - FindMedian3xLeaker(window);
     if (advance < 1) {
       advance = 1;
     }
@@ -88,7 +75,6 @@ struct Rotator {
       advance = 0xfff0;
     }
     windowM1 = 1.0 - window;
-    windowM1 = windowM1 * windowM1 * windowM1;
     frequency *= 2 * M_PI / sample_rate;
     exp_mia = {std::cos(frequency), -std::sin(frequency)};
   }
@@ -99,39 +85,52 @@ struct Rotator {
     rot[2] *= window;
     rot[3] *= window;
 
-    rot[1] += audio * rot[0];
-    rot[2] += rot[1];
+    audio *= 0.1;
+    rot[1] += windowM1 * audio * rot[0];
+    rot[2] += windowM1 * rot[1];
     rot[3] += windowM1 * rot[2];
-    ix++;
   }
   double GetSample() const {
     return rot[0].real() * rot[3].real() + rot[0].imag() * rot[3].imag();
   }
-
   double SquaredAmplitude() const { return std::norm(rot[3]); }
 };
 
 double BarkFreq(double v) {
-  constexpr double linlogsplit = 0.165;
+  constexpr double linlogsplit = 0.1;
   if (v < linlogsplit) {
-    return 20.0 + (v / linlogsplit) * 180.0;  // Linear 20-200 Hz.
+    return 20.0 + (v / linlogsplit) * 20.0;  // Linear 20-40 Hz.
   } else {
     float normalized_v = (v - linlogsplit) * (1.0 / (1.0 - linlogsplit));
-    return 200.0 * pow(100.0, normalized_v);  // Logarithmic 200-20000 Hz.
+    return 40.0 * pow(500.0, normalized_v);  // Logarithmic 40-20000 Hz.
   }
 }
 
-static constexpr int64_t kBlockSize = 16384;
-static const int kHistorySize = (1 << 17);
+
+static constexpr int64_t kBlockSize = 32768;
+static const int kHistorySize = (1 << 18);
 static const int kHistoryMask = kHistorySize - 1;
 
 class TaskExecutor {
+  std::vector<float> speaker_to_ratio_table;
+
  public:
   TaskExecutor(size_t num_threads, size_t output_channels)
       : thread_outputs_(num_threads) {
     output_channels_ = output_channels;
     for (std::vector<double>& output : thread_outputs_) {
       output.resize(output_channels * kBlockSize, 0.f);
+    }
+    const double distance_to_interval_ratio =
+        absl::GetFlag(FLAGS_distance_to_interval_ratio);
+    speaker_to_ratio_table.reserve(kSubSourcePrecision * (output_channels - 1) +
+                                   1);
+    for (int i = 0; i < kSubSourcePrecision * (output_channels - 1) + 1; ++i) {
+      const float x_div_interval = static_cast<float>(i) / kSubSourcePrecision -
+                                   0.5f * (output_channels - 1);
+      const float x_div_distance = x_div_interval / distance_to_interval_ratio;
+      const float angle = std::atan(x_div_distance);
+      speaker_to_ratio_table.push_back(ExpectedLeftToRightRatio(angle));
     }
   }
 
@@ -147,6 +146,7 @@ class TaskExecutor {
     std::vector<std::future<void>> futures;
     size_t num_threads = thread_outputs_.size();
     futures.reserve(num_threads);
+
     for (size_t i = 0; i < num_threads; ++i) {
       futures.push_back(
           std::async(std::launch::async, &TaskExecutor::Run, this, i));
@@ -167,14 +167,25 @@ class TaskExecutor {
         rot_left_[my_task].Increment(delayed_r);
         rot_right_[my_task].Increment(delayed_g);
 
-        double left = rot_left_[my_task].SquaredAmplitude(),
-               right = rot_right_[my_task].SquaredAmplitude();
+        const float ratio =
+            ActualLeftToRightRatio(rot_left_[my_task].rot[3],
+                                   rot_right_[my_task].rot[3]);
+        const int subspeaker_index =
+            std::lower_bound(speaker_to_ratio_table.begin(),
+                             speaker_to_ratio_table.end(), ratio,
+                             std::greater<>()) -
+            speaker_to_ratio_table.begin();
 
-        left = sqrt(left);
-        right = sqrt(right);
-        double index = 0.5 * ((output_channels_ - 1) +
-                              1.0 * (output_channels_ - 1) * (left - right) /
-                                  (left + right + 1e-10));
+
+        float distance_from_center = (subspeaker_index - 0.5 * (output_channels_ - 1));
+        float assumed_distance_to_line = 0.75 * (output_channels_ - 1);
+        float distance_to_virtual = sqrt(distance_from_center * distance_from_center +
+                                         assumed_distance_to_line * assumed_distance_to_line);
+        float dist_ratio = distance_to_virtual * (1.0f / assumed_distance_to_line);
+        float amp = dist_ratio * dist_ratio;
+
+        float index =
+            static_cast<float>(subspeaker_index) / kSubSourcePrecision;
 
         if (index < 0) {
           index = 0;
@@ -270,11 +281,6 @@ void Process(
 }
 
 }  // namespace
-
-ABSL_FLAG(int, output_channels, 12, "number of output channels");
-ABSL_FLAG(double, distance_to_interval_ratio, 4,
-          "ratio of (distance between microphone and source array) / (distance "
-          "between each source); default = 40cm / 10cm = 4");
 
 int main(int argc, char** argv) {
   absl::ParseCommandLine(argc, argv);
