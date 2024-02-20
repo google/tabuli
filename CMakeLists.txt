@@ -12,7 +12,7 @@ add_subdirectory(third_party/absl EXCLUDE_FROM_ALL)
 add_executable(driver_model driver_model/driver_model.cc)
 target_link_libraries(driver_model PkgConfig::SndFile)
 
-foreach (experiment IN ITEMS angular emphasizer revolve spectrum_similarity two_to_three virtual_speakers identity_sliding_fft)
+foreach (experiment IN ITEMS angular emphasizer revolve spectrum_similarity two_to_three virtual_speakers identity_sliding_fft audio_diff)
   add_executable(${experiment} speaker_experiments/${experiment}.cc)
   target_link_libraries(${experiment} PkgConfig::SndFile absl::flags absl::flags_parse absl::log absl::log_internal_check_impl)
 endforeach ()
