@@ -35,11 +35,17 @@ file = sys.argv[1]
 print("playing", file)
 run('cp "' + file + '" /tmp/input.wav')
 
-run("sox /tmp/input.wav -b 24 /tmp/down-dry.wav gain -10 rate 48k trim 0 30")
+run("sox /tmp/input.wav -b 24 /tmp/down-dry.wav gain -10 rate 48k trim 0 40")
 
-run("./build/revolve /tmp/down-dry.wav /tmp/down-dry-angular.wav")
+run("./build/revolve /tmp/down-dry.wav /tmp/16speakers.wav")
 
-run("./build/virtual_speakers --input_file /tmp/down-dry-angular.wav --num_speakers=16 --output_file=/tmp/16speakers.wav --speaker_separation=0.1 --virtual_speaker_positions '" + ";".join(["%g,-9" % ((i - 60)*0.1 + 0.05) for i in range(120)]) + "'")
+
+#run("sox /tmp/16speakers.wav -e float -b 32 /tmp/stereo.wav remix 1v1 16v1 norm -22")
+#run("sox /tmp/16speakers.wav -e float -b 32 /tmp/stereo.wav remix 1,2,3,4,5,6,7,8 9,10,11,12,13,14,15,16 norm -22")
+
+#run("aplay /tmp/stereo.wav &")
+#import sys
+#sys.exit(0)
 
 run("sox /tmp/16speakers.wav -e float -b 32 /tmp/down3-20.wav remix 0 0 1v1 2v1 3v1 4v1 5v1 6v1 7v1 8v1 0 0 9v1.3 10v1.3 11v1.3 12v1.3 13v1.3 14v1.3 15v1.3 16v1.3")
 
