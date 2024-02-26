@@ -110,21 +110,20 @@ static const int kHistoryMask = kHistorySize - 1;
 
 class TaskExecutor {
  public:
-  TaskExecutor(size_t num_threads, size_t output_channels)
+  TaskExecutor(size_t num_threads, size_t num_channels)
       : thread_outputs_(num_threads) {
-    output_channels_ = output_channels;
+    num_channels_ = num_channels;
     for (std::vector<double>& output : thread_outputs_) {
-      output.resize(output_channels * kBlockSize, 0.f);
+      output.resize(num_channels * kBlockSize, 0.f);
     }
   }
 
   void Execute(size_t num_tasks, size_t read, size_t total,
-               const double* history, Rotator* rot_left, Rotator* rot_right) {
+               const double* history, Rotator* rot) {
     read_ = read;
     total_ = total;
     history_ = history;
-    rot_left_ = rot_left;
-    rot_right_ = rot_right;
+    rot_ = rot;
     num_tasks_ = num_tasks;
     next_task_ = 0;
     std::vector<std::future<void>> futures;
@@ -141,19 +140,17 @@ class TaskExecutor {
     while (true) {
       size_t my_task = next_task_++;
       if (my_task >= num_tasks_) return;
+      Rotator* my_rot = &rot_[my_task * num_channels_];
       std::vector<double>& thread_output = thread_outputs_[thread];
       for (int i = 0; i < read_; ++i) {
-        int delayed_ix = total_ + i - rot_left_[my_task].advance;
-        float delayed_l = history_[2 * (delayed_ix & kHistoryMask) + 1];
-        float delayed_r = history_[2 * (delayed_ix & kHistoryMask) + 0];
-
-        rot_left_[my_task].Increment(delayed_l);
-        rot_right_[my_task].Increment(delayed_r);
-        double left = rot_left_[my_task].GetSample();
-        double right = rot_right_[my_task].GetSample();
-
-        thread_output[i * output_channels_ + 0] += left;
-        thread_output[i * output_channels_ + 1] += right;
+        int delayed_ix = total_ + i - my_rot->advance;
+        size_t histo_ix = num_channels_ * (delayed_ix & kHistoryMask);
+        for (size_t c = 0; c < num_channels_; ++c) {
+          float delayed = history_[histo_ix + c];
+          my_rot[c].Increment(delayed);
+          double sample = my_rot[c].GetSample();
+          thread_output[i * num_channels_ + c] += sample;
+        }
       }
     }
   }
@@ -161,9 +158,8 @@ class TaskExecutor {
   int64_t read_;
   int64_t total_;
   size_t num_tasks_;
-  size_t output_channels_;
-  Rotator* rot_left_;
-  Rotator* rot_right_;
+  size_t num_channels_;
+  Rotator* rot_;
   const double* history_;
   std::vector<std::vector<double>> thread_outputs_;
   std::atomic<size_t> next_task_{0};
@@ -171,25 +167,25 @@ class TaskExecutor {
 
 template <typename In, typename Out>
 void Process(
-    const int output_channels,
     In& input_stream, Out& output_stream,
     const std::function<void()>& start_progress = [] {},
     const std::function<void(int64_t)>& set_progress = [](int64_t written) {}) {
-  std::vector<double> history(input_stream.channels() * kHistorySize);
-  std::vector<double> input(input_stream.channels() * kBlockSize);
-  std::vector<double> output(output_channels * kBlockSize);
+  const size_t num_channels = input_stream.channels();
+  std::vector<double> history(num_channels * kHistorySize);
+  std::vector<double> input(num_channels * kBlockSize);
+  std::vector<double> output(num_channels * kBlockSize);
 
-  std::vector<Rotator> rot_left, rot_right;
-  rot_left.reserve(kNumRotators);
-  rot_right.reserve(kNumRotators);
+  std::vector<Rotator> rot;
+  rot.reserve(num_channels * kNumRotators);
   for (int i = 0; i < kNumRotators; ++i) {
     const double frequency =
         BarkFreq(static_cast<double>(i) / (kNumRotators - 1));
-    rot_left.emplace_back(frequency, input_stream.samplerate());
-    rot_right.emplace_back(frequency, input_stream.samplerate());
+    for (size_t c = 0; c < num_channels; ++c) {
+      rot.emplace_back(frequency, input_stream.samplerate());
+    }
   }
 
-  TaskExecutor pool(40, output_channels);
+  TaskExecutor pool(40, num_channels);
 
   start_progress();
   int64_t total = 0;
@@ -197,13 +193,14 @@ void Process(
     const int64_t read = input_stream.readf(input.data(), kBlockSize);
     for (int i = 0; i < read; ++i) {
       int input_ix = i + total;
-      history[2 * (input_ix & kHistoryMask) + 0] = input[2 * i];
-      history[2 * (input_ix & kHistoryMask) + 1] = input[2 * i + 1];
+      size_t histo_ix = num_channels * (input_ix & kHistoryMask);
+      for (size_t c = 0; c < num_channels; ++c) {
+        history[histo_ix + c] = input[num_channels * i + c];
+      }
     }
     if (read == 0) break;
 
-    pool.Execute(kNumRotators, read, total, history.data(), rot_left.data(),
-                 rot_right.data());
+    pool.Execute(kNumRotators, read, total, history.data(), rot.data());
 
     std::fill(output.begin(), output.end(), 0);
     for (std::vector<double>& thread_output : pool.thread_outputs_) {
@@ -220,24 +217,18 @@ void Process(
 
 }  // namespace
 
-ABSL_FLAG(int, output_channels, 2, "number of output channels");
-
 int main(int argc, char** argv) {
   absl::ParseCommandLine(argc, argv);
-
-  const int output_channels = absl::GetFlag(FLAGS_output_channels);
 
   QCHECK_EQ(argc, 3) << "Usage: " << argv[0] << " <input> <output>";
 
   SndfileHandle input_file(argv[1]);
   QCHECK(input_file) << input_file.strError();
 
-  QCHECK_EQ(input_file.channels(), 2);
-
   SndfileHandle output_file(
       argv[2], /*mode=*/SFM_WRITE, /*format=*/SF_FORMAT_WAV | SF_FORMAT_PCM_24,
-      /*channels=*/output_channels, /*samplerate=*/input_file.samplerate());
+      /*channels=*/input_file.channels(),
+      /*samplerate=*/input_file.samplerate());
 
-  Process(output_channels, input_file, output_file,
-      [] {}, [](const int64_t written) {});
+  Process(input_file, output_file, [] {}, [](const int64_t written) {});
 }
