@@ -63,17 +63,12 @@ struct Rotator {
   double window = std::pow(0.9996, 128.0/kNumRotators);  // at 40 Hz.
   double windowM1 = 1 - window;
   std::complex<double> exp_mia;
+  int delay = 0;
   int advance = 0;
 
   Rotator(double frequency, const double sample_rate) {
     window = pow(window, std::max(1.0, frequency / 40.0));
-    advance = 65000 - FindMedian3xLeaker(window);
-    if (advance < 1) {
-      advance = 1;
-    }
-    if (advance >= 0xfff0) {
-      advance = 0xfff0;
-    }
+    delay = FindMedian3xLeaker(window);
     windowM1 = 1.0 - window;
     frequency *= 2 * M_PI / sample_rate;
     exp_mia = {std::cos(frequency), -std::sin(frequency)};
@@ -118,10 +113,11 @@ class TaskExecutor {
     }
   }
 
-  void Execute(size_t num_tasks, size_t read, size_t total,
+  void Execute(size_t num_tasks, size_t read, size_t total, size_t max_delay,
                const double* history, Rotator* rot) {
     read_ = read;
     total_ = total;
+    max_delay_ = max_delay;
     history_ = history;
     rot_ = rot;
     num_tasks_ = num_tasks;
@@ -142,14 +138,20 @@ class TaskExecutor {
       if (my_task >= num_tasks_) return;
       Rotator* my_rot = &rot_[my_task * num_channels_];
       std::vector<double>& thread_output = thread_outputs_[thread];
+      size_t out_ix = 0;
       for (int i = 0; i < read_; ++i) {
         int delayed_ix = total_ + i - my_rot->advance;
         size_t histo_ix = num_channels_ * (delayed_ix & kHistoryMask);
         for (size_t c = 0; c < num_channels_; ++c) {
           float delayed = history_[histo_ix + c];
           my_rot[c].Increment(delayed);
-          double sample = my_rot[c].GetSample();
-          thread_output[i * num_channels_ + c] += sample;
+        }
+        if (total_ + i >= max_delay_) {
+          for (size_t c = 0; c < num_channels_; ++c) {
+            double sample = my_rot[c].GetSample();
+            thread_output[out_ix * num_channels_ + c] += sample;
+          }
+          ++out_ix;
         }
       }
     }
@@ -157,6 +159,7 @@ class TaskExecutor {
 
   int64_t read_;
   int64_t total_;
+  int64_t max_delay_;
   size_t num_tasks_;
   size_t num_channels_;
   Rotator* rot_;
@@ -177,20 +180,28 @@ void Process(
 
   std::vector<Rotator> rot;
   rot.reserve(num_channels * kNumRotators);
+  int max_delay = 0;
   for (int i = 0; i < kNumRotators; ++i) {
     const double frequency =
         BarkFreq(static_cast<double>(i) / (kNumRotators - 1));
     for (size_t c = 0; c < num_channels; ++c) {
       rot.emplace_back(frequency, input_stream.samplerate());
+      max_delay = std::max(max_delay, rot.back().delay);
     }
+  }
+  QCHECK_LE(max_delay, kBlockSize);
+  for (auto& r : rot) {
+    r.advance = max_delay - r.delay;
   }
 
   TaskExecutor pool(40, num_channels);
 
   start_progress();
   int64_t total = 0;
-  for (;;) {
-    const int64_t read = input_stream.readf(input.data(), kBlockSize);
+  bool done = false;
+  while (!done) {
+    int64_t read = input_stream.readf(input.data(), kBlockSize);
+    memset(input.data() + read, 0, input.size() - read);
     for (int i = 0; i < read; ++i) {
       int input_ix = i + total;
       size_t histo_ix = num_channels * (input_ix & kHistoryMask);
@@ -198,9 +209,16 @@ void Process(
         history[histo_ix + c] = input[num_channels * i + c];
       }
     }
-    if (read == 0) break;
+    if (read == 0) {
+      done = true;
+      read = max_delay;
+    }
+    int64_t output_len = total < max_delay ?
+                         std::max<int64_t>(0, read - (max_delay - total)) :
+                         read;
 
-    pool.Execute(kNumRotators, read, total, history.data(), rot.data());
+    pool.Execute(kNumRotators, read, total, max_delay, history.data(),
+                 rot.data());
 
     std::fill(output.begin(), output.end(), 0);
     for (std::vector<double>& thread_output : pool.thread_outputs_) {
@@ -209,7 +227,7 @@ void Process(
         thread_output[i] = 0.f;
       }
     }
-    output_stream.writef(output.data(), read);
+    output_stream.writef(output.data(), output_len);
     total += read;
     set_progress(total);
   }
