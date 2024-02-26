@@ -92,6 +92,19 @@ struct Rotator {
     rot[2] += windowM1 * rot[1];
     rot[3] += windowM1 * rot[2];
   }
+  void GetTriplet(std::complex<double> right_rot,
+                  std::complex<double> left_rot,
+                  double &right,
+                  double &center,
+                  double &left) {
+    auto ave = 0.5 * (right_rot + left_rot);
+    center = rot[0].real() * ave.real() + rot[0].imag() * ave.imag();
+
+    right_rot -= ave;
+    left_rot -= ave;
+    right = rot[0].real() * right_rot.real() + rot[0].imag() * right_rot.imag();
+    left = rot[0].real() * left_rot.real() + rot[0].imag() * left_rot.imag();
+  }
   double GetSample() const {
     return rot[0].real() * rot[3].real() + rot[0].imag() * rot[3].imag();
   }
@@ -184,12 +197,18 @@ void Process(
                                          assumed_distance_to_line * assumed_distance_to_line);
         float dist_ratio = distance_to_virtual * (1.0f / assumed_distance_to_line);
         float index = static_cast<float>(subspeaker_index);
-        const double sample = .5f * (rot_left[rot].GetSample() +
-                                     rot_right[rot].GetSample());
+        double right, center, left;
+        rot_left[rot].GetTriplet(rot_right[rot].rot[3], rot_left[rot].rot[3], right, center, left);
+        float speaker_offset_left = (2 - 7.5) * 0.1;
+        float speaker_offset_right = (13 - 7.5) * 0.1;
         for (int kk = 0; kk < 16; ++kk) {
           float speaker_offset = (kk - 7.5) * 0.1;
           output[i * output_channels + kk] +=
-              AngleEffect(speaker_offset + distance_from_center, assumed_distance_to_line) * sample;
+              AngleEffect(speaker_offset + distance_from_center, assumed_distance_to_line) * center;
+          output[i * output_channels + kk] +=
+              AngleEffect(speaker_offset - speaker_offset_right, assumed_distance_to_line) * right;
+          output[i * output_channels + kk] +=
+              AngleEffect(speaker_offset - speaker_offset_left, assumed_distance_to_line) * left;
         }
       }
     }
