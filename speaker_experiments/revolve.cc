@@ -39,7 +39,7 @@ constexpr int kSubSourcePrecision = 1000;
 float SquaredNorm(const std::complex<double> c) { return std::norm(c); }
 
 double MicrophoneResponse(const double angle) {
-  return 0.5f * (1.75f + std::cos(angle));
+  return 0.5f * (1.25f + std::cos(angle));
 }
 
 double ExpectedLeftToRightRatio(const double angle) {
@@ -52,8 +52,9 @@ float ActualLeftToRightRatio(const std::complex<double> left,
   return std::sqrt((1e-13 + SquaredNorm(left)) / (1e-13 + SquaredNorm(right)));
 }
 
+// Fast approximate function for temporal coherence of 3x exp leakers.
 double FindMedian3xLeaker(double window) {
-  return -2.32/log(window);  // Faster approximate function.
+  return -2.32/log(window);
 }
 
 constexpr int64_t kNumRotators = 128;
@@ -110,8 +111,7 @@ double BarkFreq(double v) {
 double AngleEffect(float dy, float distance) {
   float dist2 = sqrt(dy * dy + distance * distance);
   float cos_angle = distance / dist2;
-  cos_angle *= cos_angle;
-  cos_angle *= cos_angle;
+  cos_angle = cos_angle * cos_angle * cos_angle;
   return cos_angle;
 }
 
@@ -177,9 +177,9 @@ void Process(
                               speaker_to_ratio_table.end(), ratio,
                               std::greater<>()) -
              speaker_to_ratio_table.begin()) * (1.0 / kSubSourcePrecision);
-        float stage_size = 1.0; // meters
+        float stage_size = 1.3; // meters
         float distance_from_center = stage_size * (subspeaker_index - 0.5 * (output_channels - 1)) / (output_channels - 1);
-        float assumed_distance_to_line = stage_size * 0.6;
+        float assumed_distance_to_line = stage_size * 1.6;
         float distance_to_virtual = sqrt(distance_from_center * distance_from_center +
                                          assumed_distance_to_line * assumed_distance_to_line);
         float dist_ratio = distance_to_virtual * (1.0f / assumed_distance_to_line);
