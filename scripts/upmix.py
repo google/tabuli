@@ -35,7 +35,7 @@ file = sys.argv[1]
 print("playing", file)
 run('cp "' + file + '" /tmp/input.wav')
 
-run("sox /tmp/input.wav -b 24 /tmp/down-dry.wav gain -10 rate 48k trim 0 80")
+run("sox /tmp/input.wav -b 24 /tmp/down-dry.wav gain -10 rate 48k trim 0 8")
 
 run("./build/revolve /tmp/down-dry.wav /tmp/16speakers.wav")
 
@@ -51,7 +51,7 @@ run("sox /tmp/16speakers.wav -e float -b 32 /tmp/down3-20.wav remix 0 0 1v1 2v1 
 
 run("./build/driver_model /tmp/down3-20.wav /tmp/down3-mod.wav")
 
-run("sox /tmp/down3-mod.wav -b 24 /tmp/down3-norm.wav treble -3 10000 norm -22");
+run("sox /tmp/down3-mod.wav -b 24 /tmp/down3-norm.wav treble -3 10000 norm -32");
 
 run("amixer --card 3 cset numid=3,iface=MIXER,name='UMC1820 Output Playback Volume' 127,127,127,127,127,127,127,127,122,122,122,122,122,122,122,122")
 run("amixer --card 3 cset numid=1,iface=MIXER,name='UMC1820 Output Playback Switch' on,on,on,on,on,on,on,on,on,on,on,on,on,on,on,on")
