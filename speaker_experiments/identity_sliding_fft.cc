@@ -247,9 +247,9 @@ class InputSignal {
       } else {
         QCHECK(0) << "Unknown signal type " << params[0];
       }
-      if (absl::GetFlag(FLAGS_plot_input)) {
-        signal_f_ = fopen("/tmp/input_signal.txt", "w");
-      }
+    }
+    if (absl::GetFlag(FLAGS_plot_input)) {
+      signal_f_ = fopen("/tmp/input_signal.txt", "w");
     }
   }
 
@@ -262,7 +262,17 @@ class InputSignal {
 
   int64_t readf(double* data, size_t nframes) {
     if (input_file_) {
-      return input_file_->readf(data, nframes);
+      int64_t read = input_file_->readf(data, nframes);
+      if (signal_f_) {
+        for (size_t i = 0; i < read; ++i) {
+          if (CheckPosition(input_ix_)) {
+            fprintf(signal_f_, "%zu %f\n", input_ix_, data[i * channels_]);
+          }
+          ++input_ix_;
+        }
+      }
+      fflush(signal_f_);
+      return read;
     }
     int64_t len = signal_args_[0];
     int64_t delay = signal_args_[1];
