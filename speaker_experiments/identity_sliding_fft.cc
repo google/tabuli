@@ -20,14 +20,30 @@
 #include <cstdlib>
 #include <functional>
 #include <future>  // NOLINT
+#include <memory>
+#include <string>
 #include <vector>
 
 #include "absl/flags/flag.h"
 #include "absl/flags/parse.h"
 #include "absl/log/check.h"
+#include "absl/strings/str_split.h"
 #include "sndfile.hh"
 
+ABSL_FLAG(bool, plot_input, false, "If set, plots the input signal.");
+ABSL_FLAG(bool, plot_output, false, "If set, plots the output signal.");
+ABSL_FLAG(int, plot_from, -1, "If non-negative, start plot from here.");
+ABSL_FLAG(int, plot_to, -1, "If non-negative, end plot here.");
+
 namespace {
+
+bool CheckPosition(int64_t pos) {
+  int from = absl::GetFlag(FLAGS_plot_from);
+  int to = absl::GetFlag(FLAGS_plot_to);
+  if (from >= 0 && pos < from) return false;
+  if (to >= 0 && pos > to) return false;
+  return true;
+}
 
 int FindMedian3xLeaker(double window) {
   return static_cast<int>(-2.32/log(window));  // Approximate filter delay.
@@ -206,6 +222,129 @@ double SquareError(const double* input_history, const double* output,
   return res;
 }
 
+class InputSignal {
+ public:
+  InputSignal(const std::string& desc) {
+    std::vector<std::string> params = absl::StrSplit(desc, ":");
+    if (params.size() == 1) {
+      input_file_ = std::make_unique<SndfileHandle>(params[0].c_str());
+      QCHECK(*input_file_) << input_file_->strError();
+      channels_ = input_file_->channels();
+      samplerate_ = input_file_->samplerate();
+      signal_type_ = SignalType::WAV;
+    } else {
+      channels_ = 1;
+      samplerate_ = 48000;
+      for (size_t i = 1; i < params.size(); ++i) {
+        signal_args_.push_back(std::stod(params[i]));
+      }
+      if (params[0] == "impulse") {
+        QCHECK(signal_args_.size() >= 3);
+        signal_type_ = SignalType::IMPULSE;
+      } else if (params[0] == "sine") {
+        QCHECK(signal_args_.size() >= 4);
+        signal_type_ = SignalType::SINE;
+      } else {
+        QCHECK(0) << "Unknown signal type " << params[0];
+      }
+      if (absl::GetFlag(FLAGS_plot_input)) {
+        signal_f_ = fopen("/tmp/input_signal.txt", "w");
+      }
+    }
+  }
+
+  ~InputSignal() {
+    if (signal_f_) fclose(signal_f_);
+  }
+
+  size_t channels() const { return channels_; }
+  size_t samplerate() const { return samplerate_; }
+
+  int64_t readf(double* data, size_t nframes) {
+    if (input_file_) {
+      return input_file_->readf(data, nframes);
+    }
+    int64_t len = signal_args_[0];
+    int64_t delay = signal_args_[1];
+    double amplitude = signal_args_[2];
+    double frequency = signal_type_ == SignalType::SINE ? signal_args_[3] : 0.0;
+    double mul = 2 * M_PI * frequency / samplerate_;
+    nframes = std::min<int64_t>(len - input_ix_, nframes);
+    for (size_t i = 0; i < nframes; ++i) {
+      for (size_t c = 0; c < channels_; ++c) {
+        if (signal_type_ == SignalType::IMPULSE) {
+          data[i * channels_ + c] = (input_ix_ == delay ? amplitude : 0.0);
+        } else if (signal_type_ == SignalType::SINE) {
+          data[i * channels_ + c] =
+              amplitude * std::sin((input_ix_ - delay) * mul);
+        }
+      }
+      if (signal_f_ && CheckPosition(input_ix_)) {
+        fprintf(signal_f_, "%zu %f\n", input_ix_, data[i * channels_]);
+      }
+      ++input_ix_;
+    }
+    fflush(signal_f_);
+    return nframes;
+  }
+
+ private:
+  enum SignalType {
+    WAV,
+    IMPULSE,
+    SINE,
+  };
+  SignalType signal_type_;
+  std::vector<double> signal_args_;
+  FILE* signal_f_ = nullptr;
+  int64_t input_ix_ = 0;
+  size_t channels_;
+  size_t samplerate_;
+  std::unique_ptr<SndfileHandle> input_file_;
+};
+
+class OutputSignal {
+ public:
+  OutputSignal(size_t channels, size_t samplerate)
+      : channels_(channels), samplerate_(samplerate) {
+    if (absl::GetFlag(FLAGS_plot_output)) {
+      signal_f_ = fopen("/tmp/output_signal.txt", "w");
+    }
+  }
+
+  ~OutputSignal() {
+    if (signal_f_) fclose(signal_f_);
+  }
+
+  void writef(const double* data, size_t nframes) {
+    if (output_file_) {
+      output_file_->writef(data, nframes);
+    }
+    if (signal_f_) {
+      for (size_t i = 0; i < nframes; ++i) {
+        if (CheckPosition(output_ix_)) {
+          fprintf(signal_f_, "%zu %f\n", output_ix_, data[i * channels_]);
+        }
+        ++output_ix_;
+      }
+    }
+    fflush(signal_f_);
+  }
+
+  void SetWavFile(const char* fn) {
+    output_file_ = std::make_unique<SndfileHandle>(
+        fn, /*mode=*/SFM_WRITE, /*format=*/SF_FORMAT_WAV | SF_FORMAT_PCM_24,
+        channels_, samplerate_);
+  }
+
+ private:
+  size_t channels_;
+  size_t samplerate_;
+  size_t output_ix_ = 0;
+  std::unique_ptr<SndfileHandle> output_file_;
+  FILE* signal_f_ = nullptr;
+};
+
 template <typename In, typename Out>
 void Process(
     In& input_stream, Out& output_stream,
@@ -253,20 +392,40 @@ void Process(
   fprintf(stderr, "MSE: %f  PSNR: %f\n", err, psnr);
 }
 
+void CreatePlot() {
+  std::vector<std::pair<std::string, std::string> > to_plot;
+  if (absl::GetFlag(FLAGS_plot_input)) {
+    to_plot.push_back({"/tmp/input_signal.txt", "input"});
+  }
+  if (absl::GetFlag(FLAGS_plot_output)) {
+    to_plot.push_back({"/tmp/output_signal.txt", "output"});
+  }
+  if (to_plot.empty()) {
+    return;
+  }
+  FILE* f = fopen("/tmp/plot.txt", "w");
+  fprintf(f, "set term pngcairo\n");
+  fprintf(f, "set output \"plot.png\"\n");
+  fprintf(f, "plot ");
+  for (size_t i = 0; i < to_plot.size(); ++i) {
+    fprintf(f, "\"%s\" with lines title \"%s\"%s",
+            to_plot[i].first.c_str(), to_plot[i].second.c_str(),
+            i + 1 < to_plot.size() ? ", \\\n     " : "\n");
+  }
+  fclose(f);
+  system("gnuplot /tmp/plot.txt");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
-  absl::ParseCommandLine(argc, argv);
-
-  QCHECK_EQ(argc, 3) << "Usage: " << argv[0] << " <input> <output>";
-
-  SndfileHandle input_file(argv[1]);
-  QCHECK(input_file) << input_file.strError();
-
-  SndfileHandle output_file(
-      argv[2], /*mode=*/SFM_WRITE, /*format=*/SF_FORMAT_WAV | SF_FORMAT_PCM_24,
-      /*channels=*/input_file.channels(),
-      /*samplerate=*/input_file.samplerate());
-
-  Process(input_file, output_file, [] {}, [](const int64_t written) {});
+  std::vector<char*> posargs = absl::ParseCommandLine(argc, argv);
+  QCHECK_GE(posargs.size(), 2) << "Usage: " << argv[0] << " <input> [<output>]";
+  InputSignal input(posargs[1]);
+  OutputSignal output(input.channels(), input.samplerate());
+  if (posargs.size() > 2) {
+    output.SetWavFile(posargs[2]);
+  }
+  Process(input, output, [] {}, [](const int64_t written) {});
+  CreatePlot();
 }
