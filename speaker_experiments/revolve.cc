@@ -92,16 +92,16 @@ struct Rotator {
     rot[2] += windowM1 * rot[1];
     rot[3] += windowM1 * rot[2];
   }
-  void GetTriplet(std::complex<double> right_rot,
+  void GetTriplet(double left_to_right_ratio,
+                  std::complex<double> right_rot,
                   std::complex<double> left_rot,
                   double &right,
                   double &center,
                   double &left) {
     auto ave = 0.5 * (right_rot + left_rot);
     center = rot[0].real() * ave.real() + rot[0].imag() * ave.imag();
-
-    right_rot -= ave;
-    left_rot -= ave;
+    right_rot -= left_to_right_ratio * ave;
+    left_rot -= (1.0 - left_to_right_ratio) * ave;
     right = rot[0].real() * right_rot.real() + rot[0].imag() * right_rot.imag();
     left = rot[0].real() * left_rot.real() + rot[0].imag() * left_rot.imag();
   }
@@ -198,7 +198,8 @@ void Process(
         float dist_ratio = distance_to_virtual * (1.0f / assumed_distance_to_line);
         float index = static_cast<float>(subspeaker_index);
         double right, center, left;
-        rot_left[rot].GetTriplet(rot_right[rot].rot[3], rot_left[rot].rot[3], right, center, left);
+        rot_left[rot].GetTriplet(subspeaker_index / (output_channels - 1),
+                                 rot_right[rot].rot[3], rot_left[rot].rot[3], right, center, left);
         float speaker_offset_left = (2 - 7.5) * 0.1;
         float speaker_offset_right = (13 - 7.5) * 0.1;
         for (int kk = 0; kk < 16; ++kk) {
