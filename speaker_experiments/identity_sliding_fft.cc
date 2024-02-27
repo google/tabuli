@@ -60,13 +60,14 @@ constexpr int64_t kNumRotators = 128;
 
 struct Rotator {
   std::complex<double> rot[4] = {{1, 0}, 0};
-  double window = std::pow(0.9996, 128.0/kNumRotators);  // at 40 Hz.
+  double window = 0.9996;
   double windowM1 = 1 - window;
   std::complex<double> exp_mia;
-  int delay = 0;
-  int advance = 0;
+  int64_t delay = 0;
+  int64_t advance = 0;
 
-  Rotator(double frequency, const double sample_rate) {
+  Rotator(int64_t num_rotators, double frequency, const double sample_rate) {
+    window = std::pow(window, 128.0 / num_rotators);  // at 40 Hz.
     window = pow(window, std::max(1.0, frequency / 40.0));
     delay = FindMedian3xLeaker(window);
     windowM1 = 1.0 - window;
@@ -103,67 +104,88 @@ static constexpr int64_t kBlockSize = 1 << 15;
 static const int kHistorySize = (1 << 18);
 static const int kHistoryMask = kHistorySize - 1;
 
-class TaskExecutor {
- public:
-  TaskExecutor(size_t num_threads, size_t num_channels)
-      : thread_outputs_(num_threads) {
+struct RotatorFilterBank {
+  RotatorFilterBank(size_t num_rotators, size_t num_channels,
+                    size_t samplerate, size_t num_threads) {
+    num_rotators_ = num_rotators;
     num_channels_ = num_channels;
+    rotators_.reserve(num_channels_ * num_rotators_);
+    max_delay_ = 0;
+    for (size_t i = 0; i < num_rotators_; ++i) {
+      const double frequency =
+          BarkFreq(static_cast<double>(i) / (num_rotators_ - 1));
+      for (size_t c = 0; c < num_channels; ++c) {
+        rotators_.emplace_back(num_rotators_, frequency, samplerate);
+        max_delay_ = std::max(max_delay_, rotators_.back().delay);
+      }
+    }
+    QCHECK_LE(max_delay_, kBlockSize);
+    fprintf(stderr, "Rotator bank output delay: %zu\n", max_delay_);
+    for (auto& r : rotators_) {
+      r.advance = max_delay_ - r.delay;
+    }
+    thread_outputs_.resize(num_threads);
     for (std::vector<double>& output : thread_outputs_) {
-      output.resize(num_channels * kBlockSize, 0.f);
+      output.resize(num_channels_ * kBlockSize, 0.f);
     }
   }
 
-  void Execute(size_t num_tasks, size_t read, size_t total, size_t max_delay,
-               const double* history, Rotator* rot) {
-    read_ = read;
-    total_ = total;
-    max_delay_ = max_delay;
-    history_ = history;
-    rot_ = rot;
-    num_tasks_ = num_tasks;
+  void FilterOne(size_t f_idx, const double* history, int64_t total_in,
+                 int64_t len, double* output) {
+    Rotator* rot = &rotators_[f_idx * num_channels_];
+    size_t out_ix = 0;
+    for (int64_t i = 0; i < len; ++i) {
+      int64_t delayed_ix = total_in + i - rot->advance;
+      size_t histo_ix = num_channels_ * (delayed_ix & kHistoryMask);
+      for (size_t c = 0; c < num_channels_; ++c) {
+        float delayed = history[histo_ix + c];
+        rot[c].Increment(delayed);
+      }
+      if (total_in + i >= max_delay_) {
+        for (size_t c = 0; c < num_channels_; ++c) {
+          double sample = rot[c].GetSample();
+          output[out_ix * num_channels_ + c] += sample;
+        }
+        ++out_ix;
+      }
+    }
+  }
+
+  int64_t FilterAll(const double* history, int64_t total_in, int64_t len,
+                    double* output, size_t output_size) {
+    auto run = [&](size_t thread) {
+      while (true) {
+        size_t my_task = next_task_++;
+        if (my_task >= num_rotators_) return;
+        FilterOne(my_task, history, total_in, len,
+                  thread_outputs_[thread].data());
+      }
+    };
     next_task_ = 0;
     std::vector<std::future<void>> futures;
     size_t num_threads = thread_outputs_.size();
     futures.reserve(num_threads);
     for (size_t i = 0; i < num_threads; ++i) {
-      futures.push_back(
-          std::async(std::launch::async, &TaskExecutor::Run, this, i));
+      futures.push_back(std::async(std::launch::async, run, i));
     }
-    for (size_t i = 0; i < num_threads; ++i) futures[i].get();
-  }
-
-  void Run(size_t thread) {
-    while (true) {
-      size_t my_task = next_task_++;
-      if (my_task >= num_tasks_) return;
-      Rotator* my_rot = &rot_[my_task * num_channels_];
-      std::vector<double>& thread_output = thread_outputs_[thread];
-      size_t out_ix = 0;
-      for (int i = 0; i < read_; ++i) {
-        int delayed_ix = total_ + i - my_rot->advance;
-        size_t histo_ix = num_channels_ * (delayed_ix & kHistoryMask);
-        for (size_t c = 0; c < num_channels_; ++c) {
-          float delayed = history_[histo_ix + c];
-          my_rot[c].Increment(delayed);
-        }
-        if (total_ + i >= max_delay_) {
-          for (size_t c = 0; c < num_channels_; ++c) {
-            double sample = my_rot[c].GetSample();
-            thread_output[out_ix * num_channels_ + c] += sample;
-          }
-          ++out_ix;
-        }
+    for (size_t i = 0; i < num_threads; ++i) {
+      futures[i].get();
+    }
+    std::fill(output, output + output_size, 0);
+    for (std::vector<double>& thread_output : thread_outputs_) {
+      for (int i = 0; i < thread_output.size(); ++i) {
+        output[i] += thread_output[i];
+        thread_output[i] = 0.f;
       }
     }
+    return total_in < max_delay_ ?
+        std::max<int64_t>(0, len - (max_delay_ - total_in)) : len;
   }
 
-  int64_t read_;
-  int64_t total_;
-  int64_t max_delay_;
-  size_t num_tasks_;
+  size_t num_rotators_;
   size_t num_channels_;
-  Rotator* rot_;
-  const double* history_;
+  std::vector<Rotator> rotators_;
+  int64_t max_delay_;
   std::vector<std::vector<double>> thread_outputs_;
   std::atomic<size_t> next_task_{0};
 };
@@ -194,23 +216,8 @@ void Process(
   std::vector<double> input(num_channels * kBlockSize);
   std::vector<double> output(num_channels * kBlockSize);
 
-  std::vector<Rotator> rot;
-  rot.reserve(num_channels * kNumRotators);
-  int max_delay = 0;
-  for (int i = 0; i < kNumRotators; ++i) {
-    const double frequency =
-        BarkFreq(static_cast<double>(i) / (kNumRotators - 1));
-    for (size_t c = 0; c < num_channels; ++c) {
-      rot.emplace_back(frequency, input_stream.samplerate());
-      max_delay = std::max(max_delay, rot.back().delay);
-    }
-  }
-  QCHECK_LE(max_delay, kBlockSize);
-  for (auto& r : rot) {
-    r.advance = max_delay - r.delay;
-  }
-
-  TaskExecutor pool(40, num_channels);
+  RotatorFilterBank rotbank(kNumRotators, num_channels,
+                            input_stream.samplerate(), /*num_threads=*/40);
 
   start_progress();
   int64_t total_in = 0;
@@ -219,8 +226,11 @@ void Process(
   double err = 0.0;
   while (!done) {
     int64_t read = input_stream.readf(input.data(), kBlockSize);
-    size_t bytes_read = num_channels * read * sizeof(float);
-    memset(input.data() + bytes_read, 0, input.size() - bytes_read);
+    if (read == 0) {
+      done = true;
+      read = total_in - total_out;
+      std::fill(input.begin(), input.begin() + read, 0);
+    }
     for (int i = 0; i < read; ++i) {
       int input_ix = i + total_in;
       size_t histo_ix = num_channels * (input_ix & kHistoryMask);
@@ -228,24 +238,9 @@ void Process(
         history[histo_ix + c] = input[num_channels * i + c];
       }
     }
-    if (read == 0) {
-      done = true;
-      read = max_delay;
-    }
-    int64_t output_len = total_in < max_delay ?
-                         std::max<int64_t>(0, read - (max_delay - total_in)) :
-                         read;
-
-    pool.Execute(kNumRotators, read, total_in, max_delay, history.data(),
-                 rot.data());
-
-    std::fill(output.begin(), output.end(), 0);
-    for (std::vector<double>& thread_output : pool.thread_outputs_) {
-      for (int i = 0; i < output.size(); ++i) {
-        output[i] += thread_output[i];
-        thread_output[i] = 0.f;
-      }
-    }
+    int64_t output_len =
+        rotbank.FilterAll(history.data(), total_in, read, output.data(),
+                          output.size());
     output_stream.writef(output.data(), output_len);
     err += SquareError(history.data(), output.data(), num_channels, total_out,
                        output_len);
