@@ -32,10 +32,57 @@
 
 ABSL_FLAG(bool, plot_input, false, "If set, plots the input signal.");
 ABSL_FLAG(bool, plot_output, false, "If set, plots the output signal.");
+ABSL_FLAG(bool, plot_fft, false, "If set, plots fft of signal.");
 ABSL_FLAG(int, plot_from, -1, "If non-negative, start plot from here.");
 ABSL_FLAG(int, plot_to, -1, "If non-negative, end plot here.");
 
 namespace {
+
+template<typename T>
+std::vector<std::complex<double>> FFT(const std::vector<T>& x) {
+  size_t N = x.size();
+  QCHECK((N & (N - 1)) == 0) << "FFT length must be power of two";
+  size_t n = 0;
+  while (N) {
+    n += 1;
+    N >>= 1;
+  }
+  N = x.size();
+  --n;
+  auto bit_reverse = [&n](size_t x) {
+    size_t r = 0;
+    for (size_t k = 0; k < n; ++k) {
+      if (x & (1 << k)) {
+        r += 1 << (n - 1 - k);
+      }
+    }
+    return r;
+  };
+  auto butterfly = [](const std::complex<double>& m,
+                      std::complex<double>& a, std::complex<double>& b) {
+    std::complex<double> A = a;
+    std::complex<double> B = m * b;
+    a = A + B;
+    b = A - B;
+  };
+  std::vector<std::complex<double>> X(N);
+  for (size_t i = 0; i < N; ++i) {
+    X[bit_reverse(i)] = x[i];
+  }
+  for (size_t s = 1; s <= n; ++s) {
+    size_t m = 1 << s;
+    double freq = 2 * M_PI / m;
+    std::complex<double> mul = {std::cos(freq), -std::sin(freq)};
+    for (size_t k = 0; k < N; k += m) {
+      std::complex<double> omega = {1, 0};
+      for (size_t j = 0; j < m/ 2; ++j) {
+        butterfly(omega, X[k + j], X[k + j + m / 2]);
+        omega *= mul;
+      }
+    }
+  }
+  return X;
+}
 
 bool CheckPosition(int64_t pos) {
   int from = absl::GetFlag(FLAGS_plot_from);
@@ -271,7 +318,7 @@ class InputSignal {
           ++input_ix_;
         }
       }
-      fflush(signal_f_);
+      if (signal_f_) fflush(signal_f_);
       return read;
     }
     int64_t len = signal_args_[0];
@@ -294,7 +341,7 @@ class InputSignal {
       }
       ++input_ix_;
     }
-    fflush(signal_f_);
+    if (signal_f_) fflush(signal_f_);
     return nframes;
   }
 
@@ -317,7 +364,9 @@ class OutputSignal {
  public:
   OutputSignal(size_t channels, size_t samplerate)
       : channels_(channels), samplerate_(samplerate) {
-    if (absl::GetFlag(FLAGS_plot_output)) {
+    if (absl::GetFlag(FLAGS_plot_fft)) {
+      save_output_ = true;
+    } else if (absl::GetFlag(FLAGS_plot_output)) {
       signal_f_ = fopen("/tmp/output_signal.txt", "w");
     }
   }
@@ -337,8 +386,13 @@ class OutputSignal {
         }
         ++output_ix_;
       }
+      fflush(signal_f_);
     }
-    fflush(signal_f_);
+    if (save_output_) {
+      for (size_t i = 0; i < nframes; ++i) {
+        output_.push_back(data[i * channels_]);
+      }
+    }
   }
 
   void SetWavFile(const char* fn) {
@@ -347,10 +401,35 @@ class OutputSignal {
         channels_, samplerate_);
   }
 
+  void DumpFFT() {
+    if (!absl::GetFlag(FLAGS_plot_fft) || !absl::GetFlag(FLAGS_plot_output)) {
+      return;
+    }
+    size_t N = 1;
+    while (N < 2 * output_.size()) N <<= 1;
+    output_.resize(N);
+    std::vector<std::complex<double>> fft = FFT(output_);
+    signal_f_ = fopen("/tmp/output_signal.txt", "w");
+    const int from = absl::GetFlag(FLAGS_plot_from);
+    const int to = absl::GetFlag(FLAGS_plot_to);
+    const size_t start_freq = from == -1 ? 0 : from;
+    const size_t end_freq = to == -1 ? 20000 : to;
+    const size_t start_i = start_freq * N / samplerate_;
+    const size_t end_i = end_freq * N / samplerate_;
+    for (size_t i = start_i; i < end_i; ++i) {
+      fprintf(signal_f_, "%f  %f  %f\n", i * samplerate_ * 1.0 / N,
+              std::abs(fft[i]));
+    }
+    fclose(signal_f_);
+    signal_f_ = nullptr;
+  }
+
  private:
   size_t channels_;
   size_t samplerate_;
   size_t output_ix_ = 0;
+  bool save_output_ = false;
+  std::vector<double> output_;
   std::unique_ptr<SndfileHandle> output_file_;
   FILE* signal_f_ = nullptr;
 };
@@ -437,5 +516,6 @@ int main(int argc, char** argv) {
     output.SetWavFile(posargs[2]);
   }
   Process(input, output, [] {}, [](const int64_t written) {});
+  output.DumpFFT();
   CreatePlot();
 }
