@@ -191,10 +191,45 @@ double BarkFreq(double v) {
 static constexpr int64_t kBlockSize = 1 << 15;
 static const int kHistorySize = (1 << 18);
 static const int kHistoryMask = kHistorySize - 1;
+static const float kRotatorGains[kNumRotators] = {
+  2.912138, 1.701489, 2.744206, 4.447661,
+  0.494643, 3.636012, 0.203908, 0.045490,
+  0.034070, 0.180307, 1.513761, 1.994389,
+  1.598270, 1.158646, 0.183195, 0.167145,
+  2.011196, 0.704368, 0.193714, 1.212243,
+  1.268576, 0.363077, 0.925369, 1.113430,
+  0.717405, 0.714828, 1.122345, 0.643973,
+  0.938022, 0.861511, 0.758117, 0.986843,
+  0.723425, 0.920137, 0.796517, 0.853722,
+  0.893164, 0.838417, 0.802576, 0.883825,
+  0.861366, 0.843076, 0.835036, 0.854449,
+  0.847942, 0.829981, 0.857752, 0.829870,
+  0.855910, 0.871936, 0.811830, 0.874936,
+  0.829745, 0.870881, 0.826383, 0.851275,
+  0.855121, 0.848116, 0.845903, 0.853037,
+  0.847783, 0.843479, 0.858642, 0.848820,
+  0.850666, 0.852596, 0.849117, 0.857270,
+  0.843934, 0.861162, 0.856501, 0.836743,
+  0.883791, 0.853619, 0.836916, 0.874427,
+  0.853898, 0.848716, 0.850426, 0.864535,
+  0.877663, 0.834846, 0.836647, 0.911410,
+  0.851662, 0.786024, 0.930903, 0.867310,
+  0.797635, 0.864158, 0.911078, 0.849298,
+  0.816952, 0.870522, 0.899609, 0.841014,
+  0.795122, 0.923079, 0.864671, 0.852164,
+  0.834744, 0.963428, 0.881483, 0.776253,
+  0.942036, 0.859765, 0.857380, 0.915745,
+  0.784842, 0.969661, 0.919484, 0.879202,
+  0.966006, 0.760651, 0.972971, 0.964370,
+  0.967375, 1.366477, 0.861335, 0.394892,
+  1.398265, 1.497949, 0.436235, 1.496855,
+  0.705432, 1.205676, 1.073779, 1.451679,
+};
 
 struct RotatorFilterBank {
   RotatorFilterBank(size_t num_rotators, size_t num_channels,
-                    size_t samplerate, size_t num_threads) {
+                    size_t samplerate, size_t num_threads,
+                    const std::vector<double>& filter_gains) {
     num_rotators_ = num_rotators;
     num_channels_ = num_channels;
     num_threads_ = num_threads;
@@ -206,6 +241,9 @@ struct RotatorFilterBank {
       for (size_t c = 0; c < num_channels; ++c) {
         rotators_.emplace_back(num_rotators_, frequency, samplerate);
         max_delay_ = std::max(max_delay_, rotators_.back().delay);
+        if (i < filter_gains.size()) {
+          rotators_.back().gain *= filter_gains[i];
+        }
       }
     }
     QCHECK_LE(max_delay_, kBlockSize);
@@ -434,19 +472,24 @@ class OutputSignal {
       fprintf(f, "%zu %f\n", i, output_[i * frame_size()]);
     }
   }
-  void DumpFFT(FILE* f) {
+
+  std::vector<std::complex<double>> output_fft() {
     size_t N = 1;
     while (N < 2 * output_.size()) N <<= 1;
     output_.resize(N);
-    std::vector<std::complex<double>> fft = FFT(output_);
+    return FFT(output_);
+  }
+
+  void DumpFFT(FILE* f) {
+    auto fft = output_fft();
     const int from = absl::GetFlag(FLAGS_plot_from);
     const int to = absl::GetFlag(FLAGS_plot_to);
     const size_t start_freq = from == -1 ? 0 : from;
     const size_t end_freq = to == -1 ? 20000 : to;
-    const size_t start_i = start_freq * N / samplerate_;
-    const size_t end_i = end_freq * N / samplerate_;
+    const size_t start_i = start_freq * fft.size() / samplerate_;
+    const size_t end_i = end_freq * fft.size() / samplerate_;
     for (size_t i = start_i; i < end_i; ++i) {
-      fprintf(f, "%f  %f\n", i * samplerate_ * 1.0 / N,
+      fprintf(f, "%f  %f\n", i * samplerate_ * 1.0 / fft.size(),
               std::abs(fft[i]));
     }
   }
@@ -468,6 +511,7 @@ class OutputSignal {
 template <typename In, typename Out>
 void Process(
     In& input_stream, Out& output_stream, FilterMode mode,
+    const std::vector<double>& filter_gains = {},
     const std::function<void()>& start_progress = [] {},
     const std::function<void(int64_t)>& set_progress = [](int64_t written) {}) {
   const size_t num_channels = input_stream.channels();
@@ -476,7 +520,8 @@ void Process(
   std::vector<double> output(output_stream.frame_size() * kBlockSize);
 
   RotatorFilterBank rotbank(kNumRotators, num_channels,
-                            input_stream.samplerate(), /*num_threads=*/40);
+                            input_stream.samplerate(), /*num_threads=*/40,
+                            filter_gains);
 
   start_progress();
   int64_t total_in = 0;
@@ -510,6 +555,26 @@ void Process(
   err /= total_out;
   double psnr = -10.0 * std::log(err) / std::log(10.0);
   fprintf(stderr, "MSE: %f  PSNR: %f\n", err, psnr);
+}
+
+void RecomputeFiltrGains(std::vector<double>& filter_gains) {
+  for (int iter = 0; iter < 20; ++iter) {
+    InputSignal in("impulse:10000:6000:1");
+    OutputSignal out(1, 1, 48000, true);
+    Process(in, out, IDENTITY, filter_gains);
+    auto fft = out.output_fft();
+    for (size_t i = 0; i < kNumRotators; ++i) {
+      const double frequency =
+          BarkFreq(static_cast<double>(i) / (kNumRotators - 1));
+      double scaled_f = frequency * fft.size() / 48000;
+      size_t f0 = scaled_f;
+      size_t f1 = f0 + 1;
+      double gain = std::abs(fft[f0]) * (scaled_f - f0) +
+                    std::abs(fft[f1]) * (f1 - scaled_f);
+      filter_gains[i] /= gain;
+      fprintf(stderr, " %f,%s", filter_gains[i], i % 4 == 3 ? "\n  " : "");
+    }
+  }
 }
 
 void ValueToRgb(double val, double good_threshold, double bad_threshold,
@@ -636,6 +701,8 @@ int main(int argc, char** argv) {
   if (posargs.size() > 2) {
     output.SetWavFile(posargs[2]);
   }
-  Process(input, output, mode, [] {}, [](const int64_t written) {});
+
+  std::vector<double> filter_gains(kRotatorGains, kRotatorGains + kNumRotators);
+  Process(input, output, mode, filter_gains);
   CreatePlot(input, output, mode);
 }
