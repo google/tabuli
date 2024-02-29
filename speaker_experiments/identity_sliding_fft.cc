@@ -33,8 +33,12 @@
 ABSL_FLAG(bool, plot_input, false, "If set, plots the input signal.");
 ABSL_FLAG(bool, plot_output, false, "If set, plots the output signal.");
 ABSL_FLAG(bool, plot_fft, false, "If set, plots fft of signal.");
+ABSL_FLAG(bool, ppm, false, "If set, outputs ppm plot.");
 ABSL_FLAG(int, plot_from, -1, "If non-negative, start plot from here.");
 ABSL_FLAG(int, plot_to, -1, "If non-negative, end plot here.");
+ABSL_FLAG(int, select_rot, -1, "If set, use only one rotator.");
+ABSL_FLAG(double, gain, 1.0, "Global volume scaling.");
+ABSL_FLAG(std::string, filter_mode, "identity", "Filter mode.");
 
 namespace {
 
@@ -121,6 +125,24 @@ int FindMedian3xLeaker(double window) {
 
 constexpr int64_t kNumRotators = 128;
 
+enum FilterMode {
+  IDENTITY,
+  AMPLITUDE,
+  PHASE,
+};
+
+FilterMode GetFilterMode() {
+  std::string desc = absl::GetFlag(FLAGS_filter_mode);
+  if (desc == "identity") {
+    return IDENTITY;
+  } else if (desc == "amplitude") {
+    return AMPLITUDE;
+  } else if (desc == "phase") {
+    return PHASE;
+  }
+  QCHECK(0);
+}
+
 struct Rotator {
   std::complex<double> rot[4] = {{1, 0}, 0};
   double window = 0.9996;
@@ -128,6 +150,7 @@ struct Rotator {
   std::complex<double> exp_mia;
   int64_t delay = 0;
   int64_t advance = 0;
+  double gain = absl::GetFlag(FLAGS_gain);
 
   Rotator(int64_t num_rotators, double frequency, const double sample_rate) {
     window = std::pow(window, 128.0 / num_rotators);  // at 40 Hz.
@@ -144,12 +167,14 @@ struct Rotator {
     rot[2] *= window;
     rot[3] *= window;
 
-    rot[1] += windowM1 * audio * rot[0];
+    rot[1] += windowM1 * gain * audio * rot[0];
     rot[2] += windowM1 * rot[1];
     rot[3] += windowM1 * rot[2];
   }
-  double GetSample() const {
-    return rot[0].real() * rot[3].real() + rot[0].imag() * rot[3].imag();
+  double GetSample(FilterMode mode = IDENTITY) const {
+    return (mode == IDENTITY ?
+            rot[0].real() * rot[3].real() + rot[0].imag() * rot[3].imag() :
+            mode == AMPLITUDE ? std::abs(rot[3]) : std::arg(rot[3]));
   }
 };
 
@@ -172,6 +197,7 @@ struct RotatorFilterBank {
                     size_t samplerate, size_t num_threads) {
     num_rotators_ = num_rotators;
     num_channels_ = num_channels;
+    num_threads_ = num_threads;
     rotators_.reserve(num_channels_ * num_rotators_);
     max_delay_ = 0;
     for (size_t i = 0; i < num_rotators_; ++i) {
@@ -187,14 +213,14 @@ struct RotatorFilterBank {
     for (auto& r : rotators_) {
       r.advance = max_delay_ - r.delay;
     }
-    thread_outputs_.resize(num_threads);
-    for (std::vector<double>& output : thread_outputs_) {
+    filter_outputs_.resize(num_rotators);
+    for (std::vector<double>& output : filter_outputs_) {
       output.resize(num_channels_ * kBlockSize, 0.f);
     }
   }
 
   void FilterOne(size_t f_idx, const double* history, int64_t total_in,
-                 int64_t len, double* output) {
+                 int64_t len, FilterMode mode, double* output) {
     Rotator* rot = &rotators_[f_idx * num_channels_];
     size_t out_ix = 0;
     for (int64_t i = 0; i < len; ++i) {
@@ -206,8 +232,7 @@ struct RotatorFilterBank {
       }
       if (total_in + i >= max_delay_) {
         for (size_t c = 0; c < num_channels_; ++c) {
-          double sample = rot[c].GetSample();
-          output[out_ix * num_channels_ + c] += sample;
+          output[out_ix * num_channels_ + c] = rot[c].GetSample(mode);
         }
         ++out_ix;
       }
@@ -215,41 +240,58 @@ struct RotatorFilterBank {
   }
 
   int64_t FilterAll(const double* history, int64_t total_in, int64_t len,
-                    double* output, size_t output_size) {
+                    FilterMode mode, double* output, size_t output_size) {
+    int select_rot = absl::GetFlag(FLAGS_select_rot);
     auto run = [&](size_t thread) {
       while (true) {
         size_t my_task = next_task_++;
         if (my_task >= num_rotators_) return;
-        FilterOne(my_task, history, total_in, len,
-                  thread_outputs_[thread].data());
+        if (select_rot >= 0 && my_task != select_rot) {
+          continue;
+        }
+        FilterOne(my_task, history, total_in, len, mode,
+                  filter_outputs_[my_task].data());
       }
     };
     next_task_ = 0;
     std::vector<std::future<void>> futures;
-    size_t num_threads = thread_outputs_.size();
-    futures.reserve(num_threads);
-    for (size_t i = 0; i < num_threads; ++i) {
+    futures.reserve(num_threads_);
+    for (size_t i = 0; i < num_threads_; ++i) {
       futures.push_back(std::async(std::launch::async, run, i));
     }
-    for (size_t i = 0; i < num_threads; ++i) {
+    for (size_t i = 0; i < num_threads_; ++i) {
       futures[i].get();
     }
-    std::fill(output, output + output_size, 0);
-    for (std::vector<double>& thread_output : thread_outputs_) {
-      for (int i = 0; i < thread_output.size(); ++i) {
-        output[i] += thread_output[i];
-        thread_output[i] = 0.f;
+    size_t out_len = total_in < max_delay_ ?
+                     std::max<int64_t>(0, len - (max_delay_ - total_in)) : len;
+    if (mode == IDENTITY || select_rot >= 0) {
+      std::fill(output, output + output_size, 0);
+      for (std::vector<double>& filter_output : filter_outputs_) {
+        for (int i = 0; i < filter_output.size(); ++i) {
+          output[i] += filter_output[i];
+          filter_output[i] = 0.f;
+        }
+      }
+    } else {
+      for (size_t i = 0; i < out_len; ++i) {
+        for (size_t j = 0; j < num_rotators_; ++j) {
+          for (size_t c = 0; c < num_channels_; ++c) {
+            size_t out_idx = (i * num_rotators_ + j) * num_channels_ + c;
+            output[out_idx] =
+                filter_outputs_[j][i * num_channels_ + c];
+          }
+        }
       }
     }
-    return total_in < max_delay_ ?
-        std::max<int64_t>(0, len - (max_delay_ - total_in)) : len;
+    return out_len;
   }
 
   size_t num_rotators_;
   size_t num_channels_;
+  size_t num_threads_;
   std::vector<Rotator> rotators_;
   int64_t max_delay_;
-  std::vector<std::vector<double>> thread_outputs_;
+  std::vector<std::vector<double>> filter_outputs_;
   std::atomic<size_t> next_task_{0};
 };
 
@@ -362,36 +404,18 @@ class InputSignal {
 
 class OutputSignal {
  public:
-  OutputSignal(size_t channels, size_t samplerate)
-      : channels_(channels), samplerate_(samplerate) {
-    if (absl::GetFlag(FLAGS_plot_fft)) {
-      save_output_ = true;
-    } else if (absl::GetFlag(FLAGS_plot_output)) {
-      signal_f_ = fopen("/tmp/output_signal.txt", "w");
-    }
-  }
-
-  ~OutputSignal() {
-    if (signal_f_) fclose(signal_f_);
+  OutputSignal(size_t channels, size_t freq_channels, size_t samplerate,
+               bool save_output)
+      : channels_(channels), freq_channels_(freq_channels),
+        samplerate_(samplerate), save_output_(save_output) {
   }
 
   void writef(const double* data, size_t nframes) {
     if (output_file_) {
       output_file_->writef(data, nframes);
     }
-    if (signal_f_) {
-      for (size_t i = 0; i < nframes; ++i) {
-        if (CheckPosition(output_ix_)) {
-          fprintf(signal_f_, "%zu %f\n", output_ix_, data[i * channels_]);
-        }
-        ++output_ix_;
-      }
-      fflush(signal_f_);
-    }
     if (save_output_) {
-      for (size_t i = 0; i < nframes; ++i) {
-        output_.push_back(data[i * channels_]);
-      }
+      output_.insert(output_.end(), data, data + nframes * frame_size());
     }
   }
 
@@ -401,15 +425,20 @@ class OutputSignal {
         channels_, samplerate_);
   }
 
-  void DumpFFT() {
-    if (!absl::GetFlag(FLAGS_plot_fft) || !absl::GetFlag(FLAGS_plot_output)) {
-      return;
+  void DumpSignal(FILE* f) {
+    const int from = absl::GetFlag(FLAGS_plot_from);
+    const int to = absl::GetFlag(FLAGS_plot_to);
+    const size_t start_i = from == -1 ? 0 : from;
+    const size_t end_i = to == -1 ? num_frames() : to;
+    for (size_t i = start_i; i < end_i; ++i) {
+      fprintf(f, "%zu %f\n", i, output_[i * frame_size()]);
     }
+  }
+  void DumpFFT(FILE* f) {
     size_t N = 1;
     while (N < 2 * output_.size()) N <<= 1;
     output_.resize(N);
     std::vector<std::complex<double>> fft = FFT(output_);
-    signal_f_ = fopen("/tmp/output_signal.txt", "w");
     const int from = absl::GetFlag(FLAGS_plot_from);
     const int to = absl::GetFlag(FLAGS_plot_to);
     const size_t start_freq = from == -1 ? 0 : from;
@@ -417,32 +446,34 @@ class OutputSignal {
     const size_t start_i = start_freq * N / samplerate_;
     const size_t end_i = end_freq * N / samplerate_;
     for (size_t i = start_i; i < end_i; ++i) {
-      fprintf(signal_f_, "%f  %f  %f\n", i * samplerate_ * 1.0 / N,
+      fprintf(f, "%f  %f\n", i * samplerate_ * 1.0 / N,
               std::abs(fft[i]));
     }
-    fclose(signal_f_);
-    signal_f_ = nullptr;
   }
+
+  const std::vector<double>& output() { return output_; }
+  size_t channels() const { return channels_; }
+  size_t frame_size() const { return channels_ * freq_channels_; }
+  size_t num_frames() const { return output_.size() / frame_size(); }
 
  private:
   size_t channels_;
+  size_t freq_channels_;
   size_t samplerate_;
-  size_t output_ix_ = 0;
-  bool save_output_ = false;
+  bool save_output_;
   std::vector<double> output_;
   std::unique_ptr<SndfileHandle> output_file_;
-  FILE* signal_f_ = nullptr;
 };
 
 template <typename In, typename Out>
 void Process(
-    In& input_stream, Out& output_stream,
+    In& input_stream, Out& output_stream, FilterMode mode,
     const std::function<void()>& start_progress = [] {},
     const std::function<void(int64_t)>& set_progress = [](int64_t written) {}) {
   const size_t num_channels = input_stream.channels();
   std::vector<double> history(num_channels * kHistorySize);
   std::vector<double> input(num_channels * kBlockSize);
-  std::vector<double> output(num_channels * kBlockSize);
+  std::vector<double> output(output_stream.frame_size() * kBlockSize);
 
   RotatorFilterBank rotbank(kNumRotators, num_channels,
                             input_stream.samplerate(), /*num_threads=*/40);
@@ -467,8 +498,8 @@ void Process(
       }
     }
     int64_t output_len =
-        rotbank.FilterAll(history.data(), total_in, read, output.data(),
-                          output.size());
+        rotbank.FilterAll(history.data(), total_in, read, mode,
+                          output.data(), output.size());
     output_stream.writef(output.data(), output_len);
     err += SquareError(history.data(), output.data(), num_channels, total_out,
                        output_len);
@@ -481,13 +512,98 @@ void Process(
   fprintf(stderr, "MSE: %f  PSNR: %f\n", err, psnr);
 }
 
-void CreatePlot() {
+void ValueToRgb(double val, double good_threshold, double bad_threshold,
+                float rgb[3]) {
+  double heatmap[12][3] = {
+      {0, 0, 0},       {0, 0, 1},
+      {0, 1, 1},       {0, 1, 0},  // Good level
+      {1, 1, 0},       {1, 0, 0},  // Bad level
+      {1, 0, 1},       {0.5, 0.5, 1.0},
+      {1.0, 0.5, 0.5},  // Pastel colors for the very bad quality range.
+      {1.0, 1.0, 0.5}, {1, 1, 1},
+      {1, 1, 1},  // Last color repeated to have a solid range of white.
+  };
+  if (val < good_threshold) {
+    val = (val / good_threshold) * 0.3;
+  } else if (val < bad_threshold) {
+    val = 0.3 +
+            (val - good_threshold) / (bad_threshold - good_threshold) * 0.15;
+  } else {
+    val = 0.45 + (val - bad_threshold) / (bad_threshold * 12) * 0.5;
+  }
+  static const int kTableSize = sizeof(heatmap) / sizeof(heatmap[0]);
+  val = std::min<double>(std::max<double>(val * (kTableSize - 1), 0.0),
+                           kTableSize - 2);
+  int ix = static_cast<int>(val);
+  ix = std::min(std::max(0, ix), kTableSize - 2);  // Handle NaN
+  double mix = val - ix;
+  for (int i = 0; i < 3; ++i) {
+    double v = mix * heatmap[ix + 1][i] + (1 - mix) * heatmap[ix][i];
+    rgb[i] = pow(v, 0.5);
+  }
+}
+
+void PhaseToRgb(double phase, float rgb[3]) {
+  phase /= M_PI;
+  phase += 1;
+  if (phase < 1.0 / 3) {
+    rgb[0] = 3 * phase;
+    rgb[1] = 1 - 3 * phase;
+  } else if (phase < 2.0 / 3) {
+    phase -= 1.0 / 3;
+    rgb[1] = 3 * phase;
+    rgb[2] = 1 - 3 * phase;
+  } else {
+    phase -= 2.0 / 3;
+    rgb[2] = 3 * phase;
+    rgb[0] = 1 - 3 * phase;
+  }
+}
+
+void GetPixelValue(double sample, FilterMode mode, uint8_t* out) {
+  float rgb[3] = {};
+  if (mode == AMPLITUDE) {
+    ValueToRgb(sample, 0.01, 0.05, rgb);
+  } else if (mode == PHASE) {
+    PhaseToRgb(sample, rgb);
+  }
+  for (size_t i = 0; i < 3; ++i) {
+    out[i] = std::min<int>(255, std::max<int>(0, std::round(rgb[i] * 255)));
+  }
+}
+
+void CreatePlot(InputSignal& input, OutputSignal& output, FilterMode mode) {
+  if (absl::GetFlag(FLAGS_ppm)) {
+    const std::vector<double>& out = output.output();
+    FILE* f = fopen("/tmp/result.ppm", "wb");
+    size_t xsize = std::min<size_t>(output.num_frames(), 1 << 14);
+    size_t ysize = output.frame_size();
+    fprintf(f, "P6\n%zu %zu\n255\n", xsize, ysize);
+    for (size_t y = 0; y < ysize; ++y) {
+      std::vector<uint8_t> line(3 * xsize);
+      for (size_t x = 0; x < xsize; ++x) {
+        double sample = out[x * ysize + y];
+        GetPixelValue(sample, mode, &line[3 * x]);
+      }
+      fwrite(line.data(), xsize, 3, f);
+    }
+    fclose(f);
+    return;
+  }
   std::vector<std::pair<std::string, std::string> > to_plot;
   if (absl::GetFlag(FLAGS_plot_input)) {
     to_plot.push_back({"/tmp/input_signal.txt", "input"});
   }
   if (absl::GetFlag(FLAGS_plot_output)) {
-    to_plot.push_back({"/tmp/output_signal.txt", "output"});
+    const std::string& fn = "/tmp/output_signal.txt";
+    FILE* f = fopen(fn.c_str(), "w");
+    if (absl::GetFlag(FLAGS_plot_fft)) {
+      output.DumpFFT(f);
+    } else {
+      output.DumpSignal(f);
+    }
+    fclose(f);
+    to_plot.push_back({fn,"output"});
   }
   if (to_plot.empty()) {
     return;
@@ -510,12 +626,16 @@ void CreatePlot() {
 int main(int argc, char** argv) {
   std::vector<char*> posargs = absl::ParseCommandLine(argc, argv);
   QCHECK_GE(posargs.size(), 2) << "Usage: " << argv[0] << " <input> [<output>]";
+  FilterMode mode = GetFilterMode();
   InputSignal input(posargs[1]);
-  OutputSignal output(input.channels(), input.samplerate());
+  size_t freq_channels =
+      mode == IDENTITY || absl::GetFlag(FLAGS_select_rot) >= 0 ?
+      1 : kNumRotators;
+  OutputSignal output(input.channels(), freq_channels, input.samplerate(),
+                      absl::GetFlag(FLAGS_plot_output));
   if (posargs.size() > 2) {
     output.SetWavFile(posargs[2]);
   }
-  Process(input, output, [] {}, [](const int64_t written) {});
-  output.DumpFFT();
-  CreatePlot();
+  Process(input, output, mode, [] {}, [](const int64_t written) {});
+  CreatePlot(input, output, mode);
 }
