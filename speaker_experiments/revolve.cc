@@ -202,7 +202,7 @@ void Process(
                                  rot_right[rot].rot[3], rot_left[rot].rot[3], right, center, left);
         float speaker_offset_left = (2 - 7.5) * 0.1;
         float speaker_offset_right = (13 - 7.5) * 0.1;
-        for (int kk = 0; kk < 16; ++kk) {
+        for (int kk = 0; kk < output_channels; ++kk) {
           float speaker_offset = (kk - 7.5) * 0.1;
           output[i * output_channels + kk] +=
               AngleEffect(speaker_offset + distance_from_center, assumed_distance_to_line) * center;
