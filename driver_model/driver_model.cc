@@ -136,88 +136,8 @@ void DriverModel(int n, float *p, int stride) {
 #include <stdlib.h>
 #include <unistd.h>
 
-void BlockFilter(int n, const float *from, float *to, int stride, int sigma) {
-  double sum = 0;
-  int i = 0;
-  float mul = 1.0 / (1 + 2 * sigma);
-  for (i = -stride * sigma; i < n; i += stride) {
-    if (i < n - sigma * stride) {
-      sum += from[i + sigma * stride];
-    }
-    if (i >= 0) {
-      to[i] = sum * mul;
-    }
-    if (i >= sigma * stride) {
-      sum -= from[i - sigma * stride];
-    }
-  }
-}
-
 bool SkipChannel(int c, const Sound &snd) {
   return snd.numchannels == 20 && (c == 0 || c == 1 || c == 10 || c == 11);
-}
-
-// Reduce the lowest frequencies so that we don't run into
-// problems with too low frequencies.
-void HighPass20Hz(Sound &snd, int len) {
-  Sound buf0 = snd;
-  Sound buf1 = snd;
-  for (int c = 0; c < snd.numchannels; ++c) {
-    if (SkipChannel(c, snd)) continue;
-    fprintf(stderr, "high pass %d\n", c);
-    BlockFilter(snd.wav.size(), &buf0.wav[c], &buf1.wav[c], snd.numchannels,
-                len);
-    BlockFilter(snd.wav.size(), &buf1.wav[c], &buf0.wav[c], snd.numchannels,
-                len);
-    BlockFilter(snd.wav.size(), &buf0.wav[c], &buf1.wav[c], snd.numchannels,
-                len);
-  }
-  for (int i = 0; i < snd.wav.size(); ++i) {
-    snd.wav[i] -= buf1.wav[i];
-  }
-}
-
-bool FrontChannel(int c) { return c >= 4 && c != 10 && c != 11 && c < 18; }
-
-// We cannot locate bass, so we can make it mono first to reduce
-// the maximum amount placed on any speaker.
-void MakeMonoLowPass80Hz(Sound &snd, int len) {
-  Sound buf0 = snd;
-  Sound buf1 = snd;
-  for (int c = 0; c < snd.numchannels; ++c) {
-    if (SkipChannel(c, snd)) continue;
-    fprintf(stderr, "mono low pass %d\n", c);
-    BlockFilter(snd.wav.size(), &buf0.wav[c], &buf1.wav[c], snd.numchannels,
-                len);
-    BlockFilter(snd.wav.size(), &buf1.wav[c], &buf0.wav[c], snd.numchannels,
-                len);
-    BlockFilter(snd.wav.size(), &buf0.wav[c], &buf1.wav[c], snd.numchannels,
-                len);
-  }
-  // Remove the individual bass tracks.
-  for (int i = 0; i < buf1.wav.size(); i += buf1.numchannels) {
-    for (int c = 0; c < buf1.numchannels; ++c) {
-      if (SkipChannel(c, snd)) continue;
-      snd.wav[i + c] -= buf1.wav[i + c];
-    }
-  }
-  // Mono bass track on 0th track on buf1. Gather it only
-  // from front tracks.
-  for (int i = 0; i < buf1.wav.size(); i += buf1.numchannels) {
-    for (int c = 1; c < buf1.numchannels; ++c) {
-      if (!FrontChannel(c)) continue;
-      buf1.wav[i] += buf1.wav[i + c];
-    }
-    buf1.wav[i] *= 1 / 16.;  // ... but add it to all 16 channels.
-  }
-  for (int i = 0; i < snd.wav.size(); i += snd.numchannels) {
-    for (int c = 0; c < snd.numchannels; ++c) {
-      if (SkipChannel(c, snd)) continue;
-      if (i > 0) {
-        snd.wav[i + c] += buf1.wav[i];  // Add mono bass on all tracks.
-      }
-    }
-  }
 }
 
 int main(int argc, char **argv) {
@@ -232,8 +152,6 @@ int main(int argc, char **argv) {
   const char *wav_out = argv[2];
   Sound snd;
   Read(wav_in, &snd);
-  HighPass20Hz(snd, 400);
-  MakeMonoLowPass80Hz(snd, 250);
   for (int c = 0; c < snd.numchannels; ++c) {
     if (SkipChannel(c, snd)) continue;
     fprintf(stderr, "processing channel %d\n", c);

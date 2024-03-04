@@ -56,7 +56,8 @@ run("./build/driver_model /tmp/down3-20.wav /tmp/down3-mod.wav")
 
 run("sox /tmp/down3-mod.wav -b 24 /tmp/down3-norm.wav treble -3 10000 norm -32");
 
-run("amixer --card 3 cset numid=3,iface=MIXER,name='UMC1820 Output Playback Volume' 127,127,127,127,127,127,127,127,122,122,122,122,122,122,122,122")
+#run("amixer --card 3 cset numid=3,iface=MIXER,name='UMC1820 Output Playback Volume' 127,127,127,127,127,127,127,127,121,121,121,121,121,121,121,121")
+run("amixer --card 3 cset numid=3,iface=MIXER,name='UMC1820 Output Playback Volume' 127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127")
 run("amixer --card 3 cset numid=1,iface=MIXER,name='UMC1820 Output Playback Switch' on,on,on,on,on,on,on,on,on,on,on,on,on,on,on,on")
 
 run("aplay -D 'hw:CARD=UMC1820,DEV=0' /tmp/down3-norm.wav");
