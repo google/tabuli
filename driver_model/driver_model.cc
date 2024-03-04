@@ -93,15 +93,11 @@ void DriverModel(int n, float *p, int stride) {
   // const float displacement_mul = 1e-35;
 
   const float kInputMul = 0.3;
-  const float kSharpen = 0.01;
-  const float kInputMulCenter = kInputMul * (1.0 + 2 * kSharpen);
-  const float kInputMulOff = -kInputMul * kSharpen;
 
   for (int i = 0; i < n; i += stride) {
     float force = 0;
     if (i < n - 2 * stride - 1) {
-      force = (kInputMulOff * (p[i + 2 * stride] + p[i]) +
-               kInputMulCenter * p[i + stride]);
+      force = kInputMul * p[i + stride];
     }
 
     float v = force;
