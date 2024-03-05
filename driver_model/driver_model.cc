@@ -68,7 +68,7 @@ void Write(const std::string &path, const Sound &snd) {
 }
 
 
-struct DriverModel {
+struct MultiChannelDriverModel {
   std::vector<float> pos;
   std::vector<float> dpos;
   void Initialize(size_t n) {
@@ -85,7 +85,7 @@ struct DriverModel {
     const float kInputMul = 0.3;
 
     for (int k = 0; k < n; ++k) {
-      float v = p[k];
+      float v = kInputMul * p[k];
       dpos[k] *= damping;
       dpos[k] += v;
       pos[k] += dpos[k];
@@ -98,27 +98,11 @@ struct DriverModel {
 
 
 void DriverModel(int n, float *p, int stride) {
-  float dpos = 0.0;
-  float pos = 0.0;
-
-  const float kSuspension = 0.00039;
-
-  // damping reduces the speed of the membrane passively as it
-  // emits energy or converts it to heat in the suspension deformations
-  const float damping = 0.99999;
-
-  const float kInputMul = 0.3;
+  MultiChannelDriverModel dm;
+  dm.Initialize(1);
 
   for (int i = 0; i < n; i += stride) {
-    float force = 0;
-    force = kInputMul * p[i];
-    float v = force;
-    dpos *= damping;
-    dpos += force;
-    pos += dpos;
-    v += kSuspension * pos;
-    pos *= 0.99999; // somewhat random regularization
-    p[i] = v;
+    dm.Convert(&p[i], 1);
   }
 }
 
