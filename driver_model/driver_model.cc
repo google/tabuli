@@ -67,6 +67,36 @@ void Write(const std::string &path, const Sound &snd) {
   f.writef(snd.wav.data(), snd.numsamples);
 }
 
+
+struct DriverModel {
+  std::vector<float> pos;
+  std::vector<float> dpos;
+  void Initialize(size_t n) {
+    pos.resize(n);
+    dpos.resize(n);
+  }
+  void Convert(float *p, size_t n) {
+    const float kSuspension = 0.00039;
+
+    // damping reduces the speed of the membrane passively as it
+    // emits energy or converts it to heat in the suspension deformations
+    const float damping = 0.99999;
+
+    const float kInputMul = 0.3;
+
+    for (int k = 0; k < n; ++k) {
+      float v = p[k];
+      dpos[k] *= damping;
+      dpos[k] += v;
+      pos[k] += dpos[k];
+      v += kSuspension * pos[k];
+      pos[k] *= 0.99999; // Somewhat random position regularization.
+      p[k] = v;
+    }
+  }
+};
+
+
 void DriverModel(int n, float *p, int stride) {
   float dpos = 0.0;
   float pos = 0.0;
@@ -77,56 +107,19 @@ void DriverModel(int n, float *p, int stride) {
   // emits energy or converts it to heat in the suspension deformations
   const float damping = 0.99999;
 
-  float hysteresis = 0;
-  const float hysteresis_damping = 0.93;
-  const float force_to_hysteresis = 3e-4;
-  float min_hys = 99;
-  float max_hys = -99;
-
-  // Heat in the coil increases resistance.
-  float coil_heat = 0;
-  const float coil_cooling = 0.9997;
-  const float coil_heat_mul = 3e-7;
-  float max_heat = 0;
-
-  // Magnetic field gets weaker when the coil is displaced.
-  // const float displacement_mul = 1e-35;
-
   const float kInputMul = 0.3;
 
   for (int i = 0; i < n; i += stride) {
     float force = 0;
-    if (i < n - 2 * stride - 1) {
-      force = kInputMul * p[i + stride];
-    }
-
+    force = kInputMul * p[i];
     float v = force;
-    for (int k = 0; k < 4; ++k) {
-      dpos *= damping;
-      dpos += 0.25 * force;
-      pos += 0.25 * dpos;
-      v += 0.25 * kSuspension * pos;
-      pos *= 0.99999;
-    }
-
-    coil_heat += v * v;
-    coil_heat *= coil_cooling;
-
-    hysteresis += force_to_hysteresis * v;
-    hysteresis *= hysteresis_damping;
-
-    min_hys = std::min(min_hys, hysteresis);
-    max_hys = std::max(max_hys, hysteresis);
-    // hysteresis = min(max(hysteresis, -0.005), 0.005)
-
-    max_heat = std::max(max_heat, coil_heat);
-    v *= 1.0 - hysteresis;
-    v *= 1.0 + coil_heat * coil_heat_mul;
-    // v *= 1.0 + 0.0 * displacement_mul * pow(pos, 4);
-    //     printf("%d/%d: %g -> %g\n", i, n, p[i], v);
+    dpos *= damping;
+    dpos += force;
+    pos += dpos;
+    v += kSuspension * pos;
+    pos *= 0.99999; // somewhat random regularization
     p[i] = v;
   }
-  printf("hys: %g %g  heat: %g\n", min_hys, max_hys, coil_heat_mul * max_heat);
 }
 
 #include <stdlib.h>
