@@ -132,16 +132,57 @@ static constexpr int64_t kBlockSize = 32768;
 static const int kHistorySize = (1 << 18);
 static const int kHistoryMask = kHistorySize - 1;
 
+struct MultiChannelDriverModel {
+  std::vector<float> ave;
+  std::vector<float> pos;
+  std::vector<float> dpos;
+  void Initialize(size_t n) {
+    ave.resize(n);
+    pos.resize(n);
+    dpos.resize(n);
+  }
+  void Convert(float *p, size_t n) {
+    // This number relates to the resonance frequence of the speakers. I suspect I have around ~100 Hz.
+    // It is an ad hoc formula.
+    const float kResonance = 100.0;
+    // Funny constant -- perhaps from 1.0 / (2 * pi * samplerate),
+    // didn't analyze yet why this works, but it does.
+    const float kFunnyConstant = 0.0000039;
+    const float kSuspension = kFunnyConstant * kResonance;
+
+    // damping reduces the speed of the membrane passively as it
+    // emits energy or converts it to heat in the suspension deformations
+    const float damping = 0.99999;
+    const float kSomewhatRandomNonPhysicalPositionRegularization = 0.99999;
+
+    const float kInputMul = 0.3;
+
+    for (int k = 0; k < n; ++k) {
+      float kAve = 0.9999;
+      ave[k] *= kAve;
+      ave[k] += (1.0 - kAve) * p[k];
+      float v = kInputMul * (p[k] - ave[k]);
+      dpos[k] *= damping;
+      dpos[k] += v;
+      pos[k] += dpos[k];
+      v += kSuspension * pos[k];
+      pos[k] *= kSomewhatRandomNonPhysicalPositionRegularization;
+      p[k] = v;
+    }
+  }
+};
 
 template <typename In, typename Out>
 void Process(
     const int output_channels, const double distance_to_interval_ratio,
     In& input_stream, Out& output_stream) {
-  std::vector<double> history(input_stream.channels() * kHistorySize);
-  std::vector<double> input(input_stream.channels() * kBlockSize);
-  std::vector<double> output(output_channels * kBlockSize);
+  std::vector<float> history(input_stream.channels() * kHistorySize);
+  std::vector<float> input(input_stream.channels() * kBlockSize);
+  std::vector<float> output(output_channels * kBlockSize);
 
   std::vector<Rotator> rot_left, rot_right;
+  MultiChannelDriverModel dm;
+  dm.Initialize(output_channels);
   constexpr int64_t kNumRotators = 128;
   rot_left.reserve(kNumRotators);
   rot_right.reserve(kNumRotators);
@@ -212,6 +253,7 @@ void Process(
               AngleEffect(speaker_offset - speaker_offset_left, assumed_distance_to_line) * left;
         }
       }
+      dm.Convert(&output[i * output_channels], output_channels);
     }
     output_stream.writef(output.data(), read);
     total += read;

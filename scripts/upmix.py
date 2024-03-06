@@ -39,24 +39,12 @@ run("sox /tmp/input.wav -b 24 /tmp/down-dry.wav gain -10 rate 48k trim 0 10")
 
 run("./build/revolve /tmp/down-dry.wav /tmp/16speakers.wav")
 
-
-#run("sox /tmp/16speakers.wav -e float -b 32 /tmp/stereo.wav remix 1v1 16v1 norm -22")
-run("sox /tmp/16speakers.wav -e float -b 32 /tmp/stereo.wav remix 1,2,3,4,5,6,7,8 9,10,11,12,13,14,15,16 norm -22")
+#run("sox /tmp/16speakers.wav -e float -b 32 /tmp/stereo.wav remix 1,2,3,4,5,6,7,8 9,10,11,12,13,14,15,16 norm -22")
 mix0 = ",".join(["%d,v%g" % (i + 1, (i + 1) / 256.0) for i in range(16)])
 mix1 = ",".join(["%d,v%g" % (i + 1, (16 - i) / 256.0) for i in range(16)])
 run("sox /tmp/16speakers.wav -e float -b 32 /tmp/stereo.wav remix " + mix1 + " " + mix0 + " norm -22")
 
-#run("aplay /tmp/stereo.wav &")
-#import sys
-#sys.exit(0)
-
-run("sox /tmp/16speakers.wav -e float -b 32 /tmp/down3-20.wav remix 0 0 1v1 2v1 3v1 4v1 5v1 6v1 7v1 8v1 0 0 9v1.0 10v1.0 11v1.0 12v1.0 13v1.0 14v1.0 15v1.0 16v1.0")
-
-run("./build/driver_model /tmp/down3-20.wav /tmp/down3-mod.wav")
-
-run("sox /tmp/down3-mod.wav -b 24 /tmp/down3-norm.wav treble -3 10000 norm -32");
-
-run("sox /tmp/down3-mod.wav -e float -b 32 /tmp/stereom.wav remix 1,2,3,4,5,6,7,8,9,10 11,12,13,14,15,16,17,18,19,20 norm -22")
+run("sox /tmp/16speakers.wav -b 24 /tmp/down3-norm.wav remix 0 0 1v1 2v1 3v1 4v1 5v1 6v1 7v1 8v1 0 0 9v1.0 10v1.0 11v1.0 12v1.0 13v1.0 14v1.0 15v1.0 16v1.0 norm -32")
 
 #run("amixer --card 3 cset numid=3,iface=MIXER,name='UMC1820 Output Playback Volume' 127,127,127,127,127,127,127,127,121,121,121,121,121,121,121,121")
 run("amixer --card 3 cset numid=3,iface=MIXER,name='UMC1820 Output Playback Volume' 127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127")
