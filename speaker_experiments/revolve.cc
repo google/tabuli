@@ -133,9 +133,9 @@ static const int kHistorySize = (1 << 18);
 static const int kHistoryMask = kHistorySize - 1;
 
 struct MultiChannelDriverModel {
-  std::vector<float> ave;
-  std::vector<float> pos;
-  std::vector<float> dpos;
+  std::vector<float> ave;   // For high pass filtering of input voltage (~20 Hz or so)
+  std::vector<float> pos;   // Position of the driver membrane.
+  std::vector<float> dpos;  // Velocity of the driver membrane.
   void Initialize(size_t n) {
     ave.resize(n);
     pos.resize(n);
