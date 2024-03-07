@@ -198,8 +198,8 @@ struct Rotators {
       // The parameter relates to the frequency shape overlap and window length
       // of triple leaking integrator.
       float kWindow = 0.9996;
-      window[i] = std::pow(kWindow, 128.0 / kNumRotators);  // at 40 Hz.
-      window[i] = pow(window[i], std::max(1.0, frequency[i] / 40.0));
+      float w40Hz = std::pow(kWindow, 128.0 / kNumRotators);  // at 40 Hz.
+      window[i] = pow(w40Hz, std::max(1.0, frequency[i] / 40.0));
       delay[i] = FindMedian3xLeaker(window[i]);
       float windowM1 = 1.0f - window[i];
       max_delay_ = std::max(max_delay_, delay[i]);
@@ -227,8 +227,8 @@ struct Rotators {
     rot[8][i] *= window[i];
     rot[9][i] *= window[i];
 
-    rot[4][i] += gain[i] * audio * rot[2][i];
-    rot[5][i] += gain[i] * audio * rot[3][i];
+    rot[4][i] += rot[2][i] * audio;
+    rot[5][i] += rot[3][i] * audio;
     rot[6][i] += rot[4][i];
     rot[7][i] += rot[5][i];
     rot[8][i] += rot[6][i];
@@ -236,10 +236,42 @@ struct Rotators {
 
     // TODO(jyrki): (rot[2],rot[3]) length should be maintained at 1.0
   }
+
+
+  void AddAudio(int i, float audio) {
+    rot[4][i] += rot[2][i] * audio;
+    rot[5][i] += rot[3][i] * audio;
+  }
+  void IncrementAll() {
+    for (int i = 0; i < kNumRotators; ++i) {
+      float tr = rot[0][i] * rot[2][i] - rot[1][i] * rot[3][i];
+      float tc = rot[0][i] * rot[3][i] + rot[1][i] * rot[2][i];
+      rot[2][i] = tr;
+      rot[3][i] = tc;
+      rot[4][i] *= window[i];
+      rot[5][i] *= window[i];
+      rot[6][i] *= window[i];
+      rot[7][i] *= window[i];
+      rot[8][i] *= window[i];
+      rot[9][i] *= window[i];
+      rot[6][i] += rot[4][i];
+      rot[7][i] += rot[5][i];
+      rot[8][i] += rot[6][i];
+      rot[9][i] += rot[7][i];
+    }
+  }
+  float GetSampleAll() {
+    float retval = 0;
+    for (int i = 0; i < kNumRotators; ++i) {
+      retval += gain[i] * (rot[2][i] * rot[8][i] + rot[3][i] * rot[9][i]);
+    }
+    return retval;
+  }
+
   double GetSample(int i, FilterMode mode = IDENTITY) const {
     return (mode == IDENTITY ?
-            rot[2][i] * rot[8][i] + rot[3][i] * rot[9][i] :
-            mode == AMPLITUDE ? std::sqrt(rot[8][i] * rot[8][i] + rot[9][i] * rot[9][i]) :
+            gain[i] * (rot[2][i] * rot[8][i] + rot[3][i] * rot[9][i]) :
+            mode == AMPLITUDE ? gain[i] * std::sqrt(rot[8][i] * rot[8][i] + rot[9][i] * rot[9][i]) :
             std::atan2(rot[8][i], rot[9][i]));
   }
 };
@@ -304,6 +336,31 @@ struct RotatorFilterBank {
         ++out_ix;
       }
     }
+  }
+
+  int64_t FilterAllSingleThreaded(const double* history, int64_t total_in, int64_t len,
+                                  FilterMode mode, double* output, size_t output_size) {
+    size_t out_ix = 0;
+    for (int64_t i = 0; i < len; ++i) {
+      for (size_t c = 0; c < num_channels_; ++c) {
+        for (int k = 0; k < kNumRotators; ++k) {
+          int64_t delayed_ix = total_in + i - rotators_[c].advance[k];
+          size_t histo_ix = num_channels_ * (delayed_ix & kHistoryMask);
+          float delayed = history[histo_ix + c];
+          rotators_[c].AddAudio(k, delayed);
+        }
+        rotators_[c].IncrementAll();
+      }
+      if (total_in + i >= max_delay_) {
+        for (size_t c = 0; c < num_channels_; ++c) {
+          output[out_ix * num_channels_ + c] = rotators_[c].GetSampleAll();
+        }
+        ++out_ix;
+      }
+    }
+    size_t out_len = total_in < max_delay_ ?
+                     std::max<int64_t>(0, len - (max_delay_ - total_in)) : len;
+    return out_len;
   }
 
   int64_t FilterAll(const double* history, int64_t total_in, int64_t len,
@@ -549,7 +606,7 @@ void Process(
   std::vector<double> output(output_stream.frame_size() * kBlockSize);
 
   RotatorFilterBank rotbank(kNumRotators, num_channels,
-                            input_stream.samplerate(), /*num_threads=*/40,
+                            input_stream.samplerate(), /*num_threads=*/1,
                             filter_gains);
 
   start_progress();
@@ -572,8 +629,8 @@ void Process(
       }
     }
     int64_t output_len =
-        rotbank.FilterAll(history.data(), total_in, read, mode,
-                          output.data(), output.size());
+        rotbank.FilterAllSingleThreaded(history.data(), total_in, read, mode,
+                                        output.data(), output.size());
     output_stream.writef(output.data(), output_len);
     err += SquareError(history.data(), output.data(), num_channels, total_out,
                        output_len);
