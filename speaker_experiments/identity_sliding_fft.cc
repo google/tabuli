@@ -639,9 +639,14 @@ void Process(
         history[histo_ix + c] = input[num_channels * i + c];
       }
     }
-    int64_t output_len =
-        rotbank.FilterAllSingleThreaded(history.data(), total_in, read, mode,
-                                        output.data(), output.size());
+    int64_t output_len = 0;
+    if (mode == IDENTITY) {
+      output_len = rotbank.FilterAllSingleThreaded(history.data(), total_in, read, mode,
+                                                   output.data(), output.size());
+    } else {
+      output_len = rotbank.FilterAll(history.data(), total_in, read, mode,
+                                     output.data(), output.size());
+    }
     output_stream.writef(output.data(), output_len);
     err += SquareError(history.data(), output.data(), num_channels, total_out,
                        output_len);
