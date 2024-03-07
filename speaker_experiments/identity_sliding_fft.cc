@@ -197,7 +197,6 @@ struct Rotators {
   Rotators() { }
   Rotators(std::vector<double> frequency, const double sample_rate) {
     for (int i = 0; i < kNumRotators; ++i) {
-      gain[i] = absl::GetFlag(FLAGS_gain) * kRotatorGains[i];
       window[i] = std::pow(kWindow, 128.0 / kNumRotators);  // at 40 Hz.
       window[i] = pow(window[i], std::max(1.0, frequency[i] / 40.0));
       delay[i] = FindMedian3xLeaker(window[i]);
@@ -208,6 +207,7 @@ struct Rotators {
       rot[1][i] = float(-std::sin(f));
       rot[2][i] = 1.0f;
       rot[3][i] = 0.0f;
+      gain[i] = absl::GetFlag(FLAGS_gain) * kRotatorGains[i] * pow(windowM1[i], 3.0);
     }
     for (size_t i = 0; i < kNumRotators; ++i) {
       advance[i] = max_delay_ - delay[i];
@@ -226,12 +226,12 @@ struct Rotators {
     rot[8][i] *= window[i];
     rot[9][i] *= window[i];
 
-    rot[4][i] += windowM1[i] * gain[i] * audio * rot[2][i];
-    rot[5][i] += windowM1[i] * gain[i] * audio * rot[3][i];
-    rot[6][i] += windowM1[i] * rot[4][i];
-    rot[7][i] += windowM1[i] * rot[5][i];
-    rot[8][i] += windowM1[i] * rot[6][i];
-    rot[9][i] += windowM1[i] * rot[7][i];
+    rot[4][i] += gain[i] * audio * rot[2][i];
+    rot[5][i] += gain[i] * audio * rot[3][i];
+    rot[6][i] += rot[4][i];
+    rot[7][i] += rot[5][i];
+    rot[8][i] += rot[6][i];
+    rot[9][i] += rot[7][i];
   }
   double GetSample(int i, FilterMode mode = IDENTITY) const {
     return (mode == IDENTITY ?
