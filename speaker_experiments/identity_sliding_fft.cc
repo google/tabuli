@@ -187,27 +187,28 @@ struct Rotators {
   // [8..9] is for 3rd leaking accumulation
   float rot[10][kNumRotators] = { 0 };
   float window[kNumRotators];
-  float windowM1[kNumRotators];
   float gain[kNumRotators];
   int32_t delay[kNumRotators] = { 0 };
   int32_t advance[kNumRotators] = { 0 };
   int32_t max_delay_ = 0;
-  float kWindow = 0.9996;
 
   Rotators() { }
   Rotators(std::vector<double> frequency, const double sample_rate) {
     for (int i = 0; i < kNumRotators; ++i) {
+      // The parameter relates to the frequency shape overlap and window length
+      // of triple leaking integrator.
+      float kWindow = 0.9996;
       window[i] = std::pow(kWindow, 128.0 / kNumRotators);  // at 40 Hz.
       window[i] = pow(window[i], std::max(1.0, frequency[i] / 40.0));
       delay[i] = FindMedian3xLeaker(window[i]);
-      windowM1[i] = 1.0f - window[i];
+      float windowM1 = 1.0f - window[i];
       max_delay_ = std::max(max_delay_, delay[i]);
       float f = frequency[i] * 2.0f * M_PI / sample_rate;
+      gain[i] = absl::GetFlag(FLAGS_gain) * kRotatorGains[i] * pow(windowM1, 3.0);
       rot[0][i] = float(std::cos(f));
       rot[1][i] = float(-std::sin(f));
       rot[2][i] = 1.0f;
       rot[3][i] = 0.0f;
-      gain[i] = absl::GetFlag(FLAGS_gain) * kRotatorGains[i] * pow(windowM1[i], 3.0);
     }
     for (size_t i = 0; i < kNumRotators; ++i) {
       advance[i] = max_delay_ - delay[i];
@@ -232,6 +233,8 @@ struct Rotators {
     rot[7][i] += rot[5][i];
     rot[8][i] += rot[6][i];
     rot[9][i] += rot[7][i];
+
+    // TODO(jyrki): (rot[2],rot[3]) length should be maintained at 1.0
   }
   double GetSample(int i, FilterMode mode = IDENTITY) const {
     return (mode == IDENTITY ?
