@@ -242,6 +242,13 @@ struct Rotators {
     rot[4][i] += rot[2][i] * audio;
     rot[5][i] += rot[3][i] * audio;
   }
+  void OccasionallyRenormalize() {
+    for (int i = 0; i < kNumRotators; ++i) {
+      float norm = 1.0 / sqrt(rot[2][i] * rot[2][i] + rot[3][i] * rot[3][i]);
+      rot[2][i] *= norm;
+      rot[3][i] *= norm;
+    }
+  }
   void IncrementAll() {
     for (int i = 0; i < kNumRotators; ++i) {
       float tr = rot[0][i] * rot[2][i] - rot[1][i] * rot[3][i];
@@ -341,6 +348,9 @@ struct RotatorFilterBank {
   int64_t FilterAllSingleThreaded(const double* history, int64_t total_in, int64_t len,
                                   FilterMode mode, double* output, size_t output_size) {
     size_t out_ix = 0;
+    for (size_t c = 0; c < num_channels_; ++c) {
+      rotators_[c].OccasionallyRenormalize();
+    }
     for (int64_t i = 0; i < len; ++i) {
       for (size_t c = 0; c < num_channels_; ++c) {
         for (int k = 0; k < kNumRotators; ++k) {
