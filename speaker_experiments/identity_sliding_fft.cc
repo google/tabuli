@@ -250,17 +250,18 @@ struct Rotators {
     }
   }
   void IncrementAll() {
-    for (int i = 0; i < kNumRotators; ++i) {
-      float tr = rot[0][i] * rot[2][i] - rot[1][i] * rot[3][i];
-      float tc = rot[0][i] * rot[3][i] + rot[1][i] * rot[2][i];
+    for (int i = 0; i < kNumRotators; i++) {
+      const float tr = rot[0][i] * rot[2][i] - rot[1][i] * rot[3][i];
+      const float tc = rot[0][i] * rot[3][i] + rot[1][i] * rot[2][i];
       rot[2][i] = tr;
       rot[3][i] = tc;
-      rot[4][i] *= window[i];
-      rot[5][i] *= window[i];
-      rot[6][i] *= window[i];
-      rot[7][i] *= window[i];
-      rot[8][i] *= window[i];
-      rot[9][i] *= window[i];
+      const float w = window[i];
+      rot[4][i] *= w;
+      rot[5][i] *= w;
+      rot[6][i] *= w;
+      rot[7][i] *= w;
+      rot[8][i] *= w;
+      rot[9][i] *= w;
       rot[6][i] += rot[4][i];
       rot[7][i] += rot[5][i];
       rot[8][i] += rot[6][i];
