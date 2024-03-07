@@ -143,54 +143,6 @@ FilterMode GetFilterMode() {
   QCHECK(0);
 }
 
-struct Rotator {
-  std::complex<double> rot[4] = {{1, 0}, 0};
-  double window = 0.9996;
-  double windowM1 = 1 - window;
-  std::complex<double> exp_mia;
-  int64_t delay = 0;
-  int64_t advance = 0;
-  double gain = absl::GetFlag(FLAGS_gain);
-
-  Rotator(int64_t num_rotators, double frequency, const double sample_rate) {
-    window = std::pow(window, 128.0 / num_rotators);  // at 40 Hz.
-    window = pow(window, std::max(1.0, frequency / 40.0));
-    delay = FindMedian3xLeaker(window);
-    windowM1 = 1.0 - window;
-    frequency *= 2 * M_PI / sample_rate;
-    exp_mia = {std::cos(frequency), -std::sin(frequency)};
-  }
-
-  void Increment(double audio) {
-    rot[0] *= exp_mia;
-    rot[1] *= window;
-    rot[2] *= window;
-    rot[3] *= window;
-
-    rot[1] += windowM1 * gain * audio * rot[0];
-    rot[2] += windowM1 * rot[1];
-    rot[3] += windowM1 * rot[2];
-  }
-  double GetSample(FilterMode mode = IDENTITY) const {
-    return (mode == IDENTITY ?
-            rot[0].real() * rot[3].real() + rot[0].imag() * rot[3].imag() :
-            mode == AMPLITUDE ? std::abs(rot[3]) : std::arg(rot[3]));
-  }
-};
-
-double BarkFreq(double v) {
-  constexpr double linlogsplit = 0.1;
-  if (v < linlogsplit) {
-    return 20.0 + (v / linlogsplit) * 20.0;  // Linear 20-40 Hz.
-  } else {
-    float normalized_v = (v - linlogsplit) * (1.0 / (1.0 - linlogsplit));
-    return 40.0 * pow(500.0, normalized_v);  // Logarithmic 40-20000 Hz.
-  }
-}
-
-static constexpr int64_t kBlockSize = 1 << 15;
-static const int kHistorySize = (1 << 18);
-static const int kHistoryMask = kHistorySize - 1;
 static const float kRotatorGains[kNumRotators] = {
   2.912138, 1.701489, 2.744206, 4.447661,
   0.494643, 3.636012, 0.203908, 0.045490,
@@ -226,6 +178,71 @@ static const float kRotatorGains[kNumRotators] = {
   0.705432, 1.205676, 1.073779, 1.451679,
 };
 
+struct Rotators {
+  // Five arrays of rotators.
+  // [0] is for rotation speed
+  // [1] is for a unitary rotator
+  // [2] is for 1st leaking accumulation
+  // [3] is for 2nd leaking accumulation
+  // [4] is for 3rd leaking accumulation
+  std::complex<float> rot[5][kNumRotators] = { 0 };
+  float window[kNumRotators];
+  float windowM1[kNumRotators];
+  float gain[kNumRotators];
+  int32_t delay[kNumRotators] = { 0 };
+  int32_t advance[kNumRotators] = { 0 };
+  int32_t max_delay_ = 0;
+  float kWindow = 0.9996;
+
+  Rotators() { }
+  Rotators(std::vector<double> frequency, const double sample_rate) {
+    for (int i = 0; i < kNumRotators; ++i) {
+      gain[i] = absl::GetFlag(FLAGS_gain) * kRotatorGains[i];
+      rot[1][i] = 1.0;
+      window[i] = std::pow(kWindow, 128.0 / kNumRotators);  // at 40 Hz.
+      window[i] = pow(window[i], std::max(1.0, frequency[i] / 40.0));
+      delay[i] = FindMedian3xLeaker(window[i]);
+      windowM1[i] = 1.0f - window[i];
+      max_delay_ = std::max(max_delay_, delay[i]);
+      float f = frequency[i] * 2.0f * M_PI / sample_rate;
+      rot[0][i] = {float(std::cos(f)), float(-std::sin(f))};
+    }
+    for (size_t i = 0; i < kNumRotators; ++i) {
+      advance[i] = max_delay_ - delay[i];
+    }
+  }
+
+  void Increment(int i, float audio) {
+    rot[1][i] *= rot[0][i];
+    rot[2][i] *= window[i];
+    rot[3][i] *= window[i];
+    rot[4][i] *= window[i];
+
+    rot[2][i] += windowM1[i] * gain[i] * audio * rot[1][i];
+    rot[3][i] += windowM1[i] * rot[2][i];
+    rot[4][i] += windowM1[i] * rot[3][i];
+  }
+  double GetSample(int i, FilterMode mode = IDENTITY) const {
+    return (mode == IDENTITY ?
+            rot[1][i].real() * rot[4][i].real() + rot[1][i].imag() * rot[4][i].imag() :
+            mode == AMPLITUDE ? std::abs(rot[4][i]) : std::arg(rot[4][i]));
+  }
+};
+
+double BarkFreq(double v) {
+  constexpr double linlogsplit = 0.1;
+  if (v < linlogsplit) {
+    return 20.0 + (v / linlogsplit) * 20.0;  // Linear 20-40 Hz.
+  } else {
+    float normalized_v = (v - linlogsplit) * (1.0 / (1.0 - linlogsplit));
+    return 40.0 * pow(500.0, normalized_v);  // Logarithmic 40-20000 Hz.
+  }
+}
+
+static constexpr int64_t kBlockSize = 1 << 15;
+static const int kHistorySize = (1 << 18);
+static const int kHistoryMask = kHistorySize - 1;
+
 struct RotatorFilterBank {
   RotatorFilterBank(size_t num_rotators, size_t num_channels,
                     size_t samplerate, size_t num_threads,
@@ -233,44 +250,41 @@ struct RotatorFilterBank {
     num_rotators_ = num_rotators;
     num_channels_ = num_channels;
     num_threads_ = num_threads;
-    rotators_.reserve(num_channels_ * num_rotators_);
-    max_delay_ = 0;
+    rotators_.reserve(num_channels_);
+    std::vector<double> freqs(num_rotators);
     for (size_t i = 0; i < num_rotators_; ++i) {
-      const double frequency =
-          BarkFreq(static_cast<double>(i) / (num_rotators_ - 1));
+      freqs[i] = BarkFreq(static_cast<double>(i) / (num_rotators_ - 1));
+    }
+    if (rotators_.size() != num_channels) {
+      rotators_.clear();
       for (size_t c = 0; c < num_channels; ++c) {
-        rotators_.emplace_back(num_rotators_, frequency, samplerate);
-        max_delay_ = std::max(max_delay_, rotators_.back().delay);
-        if (i < filter_gains.size()) {
-          rotators_.back().gain *= filter_gains[i];
-        }
+        rotators_.push_back(Rotators(freqs, samplerate));
       }
     }
+    max_delay_ = rotators_[0].max_delay_;
     QCHECK_LE(max_delay_, kBlockSize);
     fprintf(stderr, "Rotator bank output delay: %zu\n", max_delay_);
-    for (auto& r : rotators_) {
-      r.advance = max_delay_ - r.delay;
-    }
     filter_outputs_.resize(num_rotators);
     for (std::vector<double>& output : filter_outputs_) {
       output.resize(num_channels_ * kBlockSize, 0.f);
     }
   }
 
-  void FilterOne(size_t f_idx, const double* history, int64_t total_in,
+  // TODO(jyrki): filter all at once in the generic case, filtering one
+  // is not memory friendly in this memory tabulation.
+  void FilterOne(size_t f_ix, const double* history, int64_t total_in,
                  int64_t len, FilterMode mode, double* output) {
-    Rotator* rot = &rotators_[f_idx * num_channels_];
     size_t out_ix = 0;
     for (int64_t i = 0; i < len; ++i) {
-      int64_t delayed_ix = total_in + i - rot->advance;
+      int64_t delayed_ix = total_in + i - rotators_[0].advance[f_ix];
       size_t histo_ix = num_channels_ * (delayed_ix & kHistoryMask);
       for (size_t c = 0; c < num_channels_; ++c) {
         float delayed = history[histo_ix + c];
-        rot[c].Increment(delayed);
+        rotators_[c].Increment(f_ix, delayed);
       }
       if (total_in + i >= max_delay_) {
         for (size_t c = 0; c < num_channels_; ++c) {
-          output[out_ix * num_channels_ + c] = rot[c].GetSample(mode);
+          output[out_ix * num_channels_ + c] = rotators_[c].GetSample(f_ix, mode);
         }
         ++out_ix;
       }
@@ -327,7 +341,7 @@ struct RotatorFilterBank {
   size_t num_rotators_;
   size_t num_channels_;
   size_t num_threads_;
-  std::vector<Rotator> rotators_;
+  std::vector<Rotators> rotators_;
   int64_t max_delay_;
   std::vector<std::vector<double>> filter_outputs_;
   std::atomic<size_t> next_task_{0};
