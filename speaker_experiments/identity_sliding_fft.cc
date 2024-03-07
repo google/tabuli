@@ -180,12 +180,12 @@ static const float kRotatorGains[kNumRotators] = {
 
 struct Rotators {
   // Five arrays of rotators.
-  // [0] is for rotation speed
-  // [1] is for a unitary rotator
-  // [2] is for 1st leaking accumulation
-  // [3] is for 2nd leaking accumulation
-  // [4] is for 3rd leaking accumulation
-  std::complex<float> rot[5][kNumRotators] = { 0 };
+  // [0..1] is for rotation speed
+  // [2..3] is for a unitary rotator
+  // [4..5] is for 1st leaking accumulation
+  // [6..7] is for 2nd leaking accumulation
+  // [8..9] is for 3rd leaking accumulation
+  float rot[10][kNumRotators] = { 0 };
   float window[kNumRotators];
   float windowM1[kNumRotators];
   float gain[kNumRotators];
@@ -198,14 +198,16 @@ struct Rotators {
   Rotators(std::vector<double> frequency, const double sample_rate) {
     for (int i = 0; i < kNumRotators; ++i) {
       gain[i] = absl::GetFlag(FLAGS_gain) * kRotatorGains[i];
-      rot[1][i] = 1.0;
       window[i] = std::pow(kWindow, 128.0 / kNumRotators);  // at 40 Hz.
       window[i] = pow(window[i], std::max(1.0, frequency[i] / 40.0));
       delay[i] = FindMedian3xLeaker(window[i]);
       windowM1[i] = 1.0f - window[i];
       max_delay_ = std::max(max_delay_, delay[i]);
       float f = frequency[i] * 2.0f * M_PI / sample_rate;
-      rot[0][i] = {float(std::cos(f)), float(-std::sin(f))};
+      rot[0][i] = float(std::cos(f));
+      rot[1][i] = float(-std::sin(f));
+      rot[2][i] = 1.0f;
+      rot[3][i] = 0.0f;
     }
     for (size_t i = 0; i < kNumRotators; ++i) {
       advance[i] = max_delay_ - delay[i];
@@ -213,19 +215,29 @@ struct Rotators {
   }
 
   void Increment(int i, float audio) {
-    rot[1][i] *= rot[0][i];
-    rot[2][i] *= window[i];
-    rot[3][i] *= window[i];
+    float tr = rot[0][i] * rot[2][i] - rot[1][i] * rot[3][i];
+    float tc = rot[0][i] * rot[3][i] + rot[1][i] * rot[2][i];
+    rot[2][i] = tr;
+    rot[3][i] = tc;
     rot[4][i] *= window[i];
+    rot[5][i] *= window[i];
+    rot[6][i] *= window[i];
+    rot[7][i] *= window[i];
+    rot[8][i] *= window[i];
+    rot[9][i] *= window[i];
 
-    rot[2][i] += windowM1[i] * gain[i] * audio * rot[1][i];
-    rot[3][i] += windowM1[i] * rot[2][i];
-    rot[4][i] += windowM1[i] * rot[3][i];
+    rot[4][i] += windowM1[i] * gain[i] * audio * rot[2][i];
+    rot[5][i] += windowM1[i] * gain[i] * audio * rot[3][i];
+    rot[6][i] += windowM1[i] * rot[4][i];
+    rot[7][i] += windowM1[i] * rot[5][i];
+    rot[8][i] += windowM1[i] * rot[6][i];
+    rot[9][i] += windowM1[i] * rot[7][i];
   }
   double GetSample(int i, FilterMode mode = IDENTITY) const {
     return (mode == IDENTITY ?
-            rot[1][i].real() * rot[4][i].real() + rot[1][i].imag() * rot[4][i].imag() :
-            mode == AMPLITUDE ? std::abs(rot[4][i]) : std::arg(rot[4][i]));
+            rot[2][i] * rot[8][i] + rot[3][i] * rot[9][i] :
+            mode == AMPLITUDE ? std::sqrt(rot[8][i] * rot[8][i] + rot[9][i] * rot[9][i]) :
+            std::atan2(rot[8][i], rot[9][i]));
   }
 };
 
