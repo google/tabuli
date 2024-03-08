@@ -96,33 +96,6 @@ bool CheckPosition(int64_t pos) {
   return true;
 }
 
-int FindMedian3xLeaker(double window) {
-  return static_cast<int>(-2.32/log(window));  // Approximate filter delay.
-  /*
-  double windowM1 = 1.0 - window;
-  double half_way_to_total_sum = 1e99;
-  for (int k = 0; k < 2; ++k) {
-    double sum = 0;
-    double rot1 = 1;
-    double rot2 = 0;
-    double rot3 = 0;
-    for (int i = 0; i < 65000; ++i) {
-      rot1 *= window;
-      rot2 *= window;
-      rot3 *= window;
-      rot2 += windowM1 * rot1;
-      rot3 += windowM1 * rot2;
-      sum += rot3 * rot3;
-      if (sum >= half_way_to_total_sum) {
-        return i;
-      }
-    }
-    half_way_to_total_sum = 0.5 * sum;
-  }
-  abort();
-  */
-}
-
 constexpr int64_t kNumRotators = 128;
 
 enum FilterMode {
@@ -191,6 +164,11 @@ struct Rotators {
   int32_t delay[kNumRotators] = { 0 };
   int32_t advance[kNumRotators] = { 0 };
   int32_t max_delay_ = 0;
+
+  int FindMedian3xLeaker(double window) {
+    // Approximate filter delay. TODO: optimize this value along with gain values.
+    return static_cast<int>(-2.206/log(window));
+  }
 
   Rotators() { }
   Rotators(std::vector<double> frequency, const double sample_rate) {
