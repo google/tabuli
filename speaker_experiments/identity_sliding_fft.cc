@@ -289,6 +289,10 @@ static constexpr int64_t kBlockSize = 1 << 15;
 static const int kHistorySize = (1 << 18);
 static const int kHistoryMask = kHistorySize - 1;
 
+float HardClip(float v) {
+  return std::max(-1.0f, std::min(1.0f, v));
+}
+
 struct RotatorFilterBank {
   RotatorFilterBank(size_t num_rotators, size_t num_channels,
                     size_t samplerate, size_t num_threads,
@@ -352,7 +356,7 @@ struct RotatorFilterBank {
       rotators_->IncrementAll();
       if (total_in + i >= max_delay_) {
         for (size_t c = 0; c < num_channels_; ++c) {
-          output[out_ix * num_channels_ + c] = rotators_->GetSampleAll(c);
+          output[out_ix * num_channels_ + c] = HardClip(rotators_->GetSampleAll(c));
         }
         ++out_ix;
       }
