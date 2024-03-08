@@ -146,39 +146,43 @@ static const float kRotatorGains[kNumRotators] = {
   0.942036, 0.859765, 0.857380, 0.915745,
   0.784842, 0.969661, 0.919484, 0.879202,
   0.966006, 0.760651, 0.972971, 0.964370,
-  0.967375, 1.366477, 0.861335, 0.394892,
-  1.398265, 1.497949, 0.436235, 1.496855,
-  0.705432, 1.205676, 1.073779, 1.451679,
+  1.0, 1.0, 1.0, 1.0,
+  1.0, 1.0, 1.0, 1.0,
+  1.0, 1.0, 1.0, 1.0,
 };
 
 struct PerChannel {
+  // [0..1] is for real and imag of 1st leaking accumulation
+  // [2..3] is for real and imag of 2nd leaking accumulation
+  // [4..5] is for real and imag of 3rd leaking accumulation
   float accu[6][kNumRotators] = { 0 };
 };
 
 struct Rotators {
-  // Five arrays of rotators.
-  // [0..1] is for rotation speed
-  // [2..3] is for a unitary rotator
-  // [4..5] is for 1st leaking accumulation
-  // [6..7] is for 2nd leaking accumulation
-  // [8..9] is for 3rd leaking accumulation
+  // Four arrays of rotators.
+  // [0..1] is real and imag for rotation speed
+  // [2..3] is real and image for a frequency rotator of length sqrt(gain[i])
+  // Values inserted into the rotators are multiplied with this rotator in both input
+  // and output, leading to a total gain multiplication if the length is at sqrt(gain).
   float rot[4][kNumRotators] = { 0 };
   std::vector<PerChannel> channel;
   // Accu has the channel related data, everything else the same between channels.
   float window[kNumRotators];
   float gain[kNumRotators];
-  int32_t delay[kNumRotators] = { 0 };
-  int32_t advance[kNumRotators] = { 0 };
-  int32_t max_delay_ = 0;
+  int16_t delay[kNumRotators] = { 0 };
+  int16_t advance[kNumRotators] = { 0 };
+  int16_t max_delay_ = 0;
 
   int FindMedian3xLeaker(double window) {
     // Approximate filter delay. TODO: optimize this value along with gain values.
-    return static_cast<int>(-2.206/log(window));
+    // Recordings can sound better with -2.32 as it pushes the bass signals a bit earlier
+    // and likely compensates human hearing's deficiency for temporal separation.
+    return static_cast<int>(-2.20573/log(window));
   }
 
   Rotators() { }
-  Rotators(std::vector<double> frequency, const double sample_rate) {
-    channel.resize(1);
+  Rotators(int num_channels, std::vector<double> frequency, const double sample_rate) {
+    channel.resize(num_channels);
     for (int i = 0; i < kNumRotators; ++i) {
       // The parameter relates to the frequency shape overlap and window length
       // of triple leaking integrator.
@@ -200,25 +204,25 @@ struct Rotators {
     }
   }
 
-  void Increment(int i, float audio) {
-    float tr = rot[0][i] * rot[2][i] - rot[1][i] * rot[3][i];
-    float tc = rot[0][i] * rot[3][i] + rot[1][i] * rot[2][i];
-    rot[2][i] = tr;
-    rot[3][i] = tc;
-    for (int c = 0; c < channel.size(); ++c) {
-      channel[c].accu[0][i] *= window[i];
-      channel[c].accu[1][i] *= window[i];
-      channel[c].accu[2][i] *= window[i];
-      channel[c].accu[3][i] *= window[i];
-      channel[c].accu[4][i] *= window[i];
-      channel[c].accu[5][i] *= window[i];
-      channel[c].accu[0][i] += rot[2][i] * audio;
-      channel[c].accu[1][i] += rot[3][i] * audio;
-      channel[c].accu[2][i] += channel[c].accu[0][i];
-      channel[c].accu[3][i] += channel[c].accu[1][i];
-      channel[c].accu[4][i] += channel[c].accu[2][i];
-      channel[c].accu[5][i] += channel[c].accu[3][i];
+  void Increment(int c, int i, float audio) {
+    if (c == 0) {
+      float tr = rot[0][i] * rot[2][i] - rot[1][i] * rot[3][i];
+      float tc = rot[0][i] * rot[3][i] + rot[1][i] * rot[2][i];
+      rot[2][i] = tr;
+      rot[3][i] = tc;
     }
+    channel[c].accu[0][i] *= window[i];
+    channel[c].accu[1][i] *= window[i];
+    channel[c].accu[2][i] *= window[i];
+    channel[c].accu[3][i] *= window[i];
+    channel[c].accu[4][i] *= window[i];
+    channel[c].accu[5][i] *= window[i];
+    channel[c].accu[0][i] += rot[2][i] * audio;
+    channel[c].accu[1][i] += rot[3][i] * audio;
+    channel[c].accu[2][i] += channel[c].accu[0][i];
+    channel[c].accu[3][i] += channel[c].accu[1][i];
+    channel[c].accu[4][i] += channel[c].accu[2][i];
+    channel[c].accu[5][i] += channel[c].accu[3][i];
   }
 
   void AddAudio(int c, int i, float audio) {
@@ -262,7 +266,6 @@ struct Rotators {
     }
     return retval;
   }
-
   double GetSample(int c, int i, FilterMode mode = IDENTITY) const {
     return (mode == IDENTITY ?
             (rot[2][i] * channel[c].accu[4][i] + rot[3][i] * channel[c].accu[5][i]) :
@@ -293,17 +296,11 @@ struct RotatorFilterBank {
     num_rotators_ = num_rotators;
     num_channels_ = num_channels;
     num_threads_ = num_threads;
-    rotators_.reserve(num_channels_);
     std::vector<double> freqs(num_rotators);
     for (size_t i = 0; i < num_rotators_; ++i) {
       freqs[i] = BarkFreq(static_cast<double>(i) / (num_rotators_ - 1));
     }
-    if (rotators_.size() != num_channels) {
-      rotators_.clear();
-      for (size_t c = 0; c < num_channels; ++c) {
-        rotators_.push_back(Rotators(freqs, samplerate));
-      }
-    }
+    rotators_ = new Rotators(num_channels, freqs, samplerate);
     max_delay_ = rotators_[0].max_delay_;
     QCHECK_LE(max_delay_, kBlockSize);
     fprintf(stderr, "Rotator bank output delay: %zu\n", max_delay_);
@@ -312,6 +309,9 @@ struct RotatorFilterBank {
       output.resize(num_channels_ * kBlockSize, 0.f);
     }
   }
+  ~RotatorFilterBank() {
+    delete rotators_;
+  }
 
   // TODO(jyrki): filter all at once in the generic case, filtering one
   // is not memory friendly in this memory tabulation.
@@ -319,15 +319,15 @@ struct RotatorFilterBank {
                  int64_t len, FilterMode mode, double* output) {
     size_t out_ix = 0;
     for (int64_t i = 0; i < len; ++i) {
-      int64_t delayed_ix = total_in + i - rotators_[0].advance[f_ix];
+      int64_t delayed_ix = total_in + i - rotators_->advance[f_ix];
       size_t histo_ix = num_channels_ * (delayed_ix & kHistoryMask);
       for (size_t c = 0; c < num_channels_; ++c) {
         float delayed = history[histo_ix + c];
-        rotators_[c].Increment(f_ix, delayed);
+        rotators_->Increment(c, f_ix, delayed);
       }
       if (total_in + i >= max_delay_) {
         for (size_t c = 0; c < num_channels_; ++c) {
-          output[out_ix * num_channels_ + c] = rotators_[c].GetSample(f_ix, mode);
+          output[out_ix * num_channels_ + c] = rotators_->GetSample(c, f_ix, mode);
         }
         ++out_ix;
       }
@@ -338,21 +338,21 @@ struct RotatorFilterBank {
                                   FilterMode mode, double* output, size_t output_size) {
     size_t out_ix = 0;
     for (size_t c = 0; c < num_channels_; ++c) {
-      rotators_[c].OccasionallyRenormalize();
+      rotators_->OccasionallyRenormalize();
     }
     for (int64_t i = 0; i < len; ++i) {
       for (size_t c = 0; c < num_channels_; ++c) {
         for (int k = 0; k < kNumRotators; ++k) {
-          int64_t delayed_ix = total_in + i - rotators_[c].advance[k];
+          int64_t delayed_ix = total_in + i - rotators_->advance[k];
           size_t histo_ix = num_channels_ * (delayed_ix & kHistoryMask);
           float delayed = history[histo_ix + c];
-          rotators_[c].AddAudio(0, k, delayed);
+          rotators_->AddAudio(c, k, delayed);
         }
-        rotators_[c].IncrementAll();
       }
+      rotators_->IncrementAll();
       if (total_in + i >= max_delay_) {
         for (size_t c = 0; c < num_channels_; ++c) {
-          output[out_ix * num_channels_ + c] = rotators_[c].GetSampleAll(0);
+          output[out_ix * num_channels_ + c] = rotators_->GetSampleAll(c);
         }
         ++out_ix;
       }
@@ -412,7 +412,7 @@ struct RotatorFilterBank {
   size_t num_rotators_;
   size_t num_channels_;
   size_t num_threads_;
-  std::vector<Rotators> rotators_;
+  Rotators *rotators_;
   int64_t max_delay_;
   std::vector<std::vector<double>> filter_outputs_;
   std::atomic<size_t> next_task_{0};
