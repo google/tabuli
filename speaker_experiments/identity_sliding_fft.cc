@@ -158,7 +158,9 @@ struct Rotators {
   // [4..5] is for 1st leaking accumulation
   // [6..7] is for 2nd leaking accumulation
   // [8..9] is for 3rd leaking accumulation
-  float rot[10][kNumRotators] = { 0 };
+  float rot[4][kNumRotators] = { 0 };
+  // Accu has the channel related data, everything else the same between channels.
+  float accu[6][kNumRotators] = { 0 };
   float window[kNumRotators];
   float gain[kNumRotators];
   int32_t delay[kNumRotators] = { 0 };
@@ -198,27 +200,25 @@ struct Rotators {
     float tc = rot[0][i] * rot[3][i] + rot[1][i] * rot[2][i];
     rot[2][i] = tr;
     rot[3][i] = tc;
-    rot[4][i] *= window[i];
-    rot[5][i] *= window[i];
-    rot[6][i] *= window[i];
-    rot[7][i] *= window[i];
-    rot[8][i] *= window[i];
-    rot[9][i] *= window[i];
+    accu[0][i] *= window[i];
+    accu[1][i] *= window[i];
+    accu[2][i] *= window[i];
+    accu[3][i] *= window[i];
+    accu[4][i] *= window[i];
+    accu[5][i] *= window[i];
 
-    rot[4][i] += rot[2][i] * audio;
-    rot[5][i] += rot[3][i] * audio;
-    rot[6][i] += rot[4][i];
-    rot[7][i] += rot[5][i];
-    rot[8][i] += rot[6][i];
-    rot[9][i] += rot[7][i];
-
-    // TODO(jyrki): (rot[2],rot[3]) length should be maintained at 1.0
+    accu[0][i] += rot[2][i] * audio;
+    accu[1][i] += rot[3][i] * audio;
+    accu[2][i] += accu[0][i];
+    accu[3][i] += accu[1][i];
+    accu[4][i] += accu[2][i];
+    accu[5][i] += accu[3][i];
   }
 
 
   void AddAudio(int i, float audio) {
-    rot[4][i] += rot[2][i] * audio;
-    rot[5][i] += rot[3][i] * audio;
+    accu[0][i] += rot[2][i] * audio;
+    accu[1][i] += rot[3][i] * audio;
   }
   void OccasionallyRenormalize() {
     for (int i = 0; i < kNumRotators; ++i) {
@@ -234,31 +234,31 @@ struct Rotators {
       rot[2][i] = tr;
       rot[3][i] = tc;
       const float w = window[i];
-      rot[4][i] *= w;
-      rot[5][i] *= w;
-      rot[6][i] *= w;
-      rot[7][i] *= w;
-      rot[8][i] *= w;
-      rot[9][i] *= w;
-      rot[6][i] += rot[4][i];
-      rot[7][i] += rot[5][i];
-      rot[8][i] += rot[6][i];
-      rot[9][i] += rot[7][i];
+      accu[0][i] *= w;
+      accu[1][i] *= w;
+      accu[2][i] *= w;
+      accu[3][i] *= w;
+      accu[4][i] *= w;
+      accu[5][i] *= w;
+      accu[2][i] += accu[0][i];
+      accu[3][i] += accu[1][i];
+      accu[4][i] += accu[2][i];
+      accu[5][i] += accu[3][i];
     }
   }
   float GetSampleAll() {
     float retval = 0;
     for (int i = 0; i < kNumRotators; ++i) {
-      retval += (rot[2][i] * rot[8][i] + rot[3][i] * rot[9][i]);
+      retval += (rot[2][i] * accu[4][i] + rot[3][i] * accu[5][i]);
     }
     return retval;
   }
 
   double GetSample(int i, FilterMode mode = IDENTITY) const {
     return (mode == IDENTITY ?
-            (rot[2][i] * rot[8][i] + rot[3][i] * rot[9][i]) :
-            mode == AMPLITUDE ? std::sqrt(gain[i] * (rot[8][i] * rot[8][i] + rot[9][i] * rot[9][i])) :
-            std::atan2(rot[8][i], rot[9][i]));
+            (rot[2][i] * accu[4][i] + rot[3][i] * accu[5][i]) :
+            mode == AMPLITUDE ? std::sqrt(gain[i] * (accu[4][i] * accu[4][i] + accu[5][i] * accu[5][i])) :
+            std::atan2(accu[4][i], accu[5][i]));
   }
 };
 
