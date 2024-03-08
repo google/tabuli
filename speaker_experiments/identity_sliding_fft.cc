@@ -207,7 +207,7 @@ struct Rotators {
       gain[i] = absl::GetFlag(FLAGS_gain) * kRotatorGains[i] * pow(windowM1, 3.0);
       rot[0][i] = float(std::cos(f));
       rot[1][i] = float(-std::sin(f));
-      rot[2][i] = 1.0f;
+      rot[2][i] = sqrt(gain[i]);
       rot[3][i] = 0.0f;
     }
     for (size_t i = 0; i < kNumRotators; ++i) {
@@ -244,7 +244,7 @@ struct Rotators {
   }
   void OccasionallyRenormalize() {
     for (int i = 0; i < kNumRotators; ++i) {
-      float norm = 1.0 / sqrt(rot[2][i] * rot[2][i] + rot[3][i] * rot[3][i]);
+      float norm = sqrt(gain[i] / (rot[2][i] * rot[2][i] + rot[3][i] * rot[3][i]));
       rot[2][i] *= norm;
       rot[3][i] *= norm;
     }
@@ -271,15 +271,15 @@ struct Rotators {
   float GetSampleAll() {
     float retval = 0;
     for (int i = 0; i < kNumRotators; ++i) {
-      retval += gain[i] * (rot[2][i] * rot[8][i] + rot[3][i] * rot[9][i]);
+      retval += (rot[2][i] * rot[8][i] + rot[3][i] * rot[9][i]);
     }
     return retval;
   }
 
   double GetSample(int i, FilterMode mode = IDENTITY) const {
     return (mode == IDENTITY ?
-            gain[i] * (rot[2][i] * rot[8][i] + rot[3][i] * rot[9][i]) :
-            mode == AMPLITUDE ? gain[i] * std::sqrt(rot[8][i] * rot[8][i] + rot[9][i] * rot[9][i]) :
+            (rot[2][i] * rot[8][i] + rot[3][i] * rot[9][i]) :
+            mode == AMPLITUDE ? std::sqrt(gain[i] * (rot[8][i] * rot[8][i] + rot[9][i] * rot[9][i])) :
             std::atan2(rot[8][i], rot[9][i]));
   }
 };
