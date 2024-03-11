@@ -116,40 +116,44 @@ FilterMode GetFilterMode() {
   QCHECK(0);
 }
 
-static const float kRotatorGains[kNumRotators] = {
-  1.0, 1.0, 1.0, 1.0,
-  1.0, 1.0, 1.0, 1.0,
-  1.0, 1.0, 1.0, 1.0,
-  1.0, 1.0, 1.0, 1.0,
-  1.0, 1.0, 1.0, 1.0,
-  1.0, 1.0, 1.0, 1.0,
-  1.0, 1.0, 1.0, 1.0,
-  1.0, 1.0, 1.0, 1.0,
-  1.0, 1.0, 1.0, 1.0,
-  1.0, 1.0, 1.0, 1.0,
-  0.99, 0.99, 0.99, 0.99,
-  0.99, 0.99, 0.99, 0.99,
-  0.99, 0.99, 0.99, 0.99,
-  0.97, 0.94, 0.92, 0.9,
-  0.855121, 0.848116, 0.845903, 0.853037,
-  0.847783, 0.843479, 0.858642, 0.848820,
-  0.850666, 0.852596, 0.849117, 0.857270,
-  0.843934, 0.861162, 0.856501, 0.836743,
-  0.883791, 0.853619, 0.836916, 0.874427,
-  0.853898, 0.848716, 0.850426, 0.864535,
-  0.877663, 0.834846, 0.836647, 0.911410,
-  0.851662, 0.786024, 0.930903, 0.867310,
-  0.797635, 0.864158, 0.911078, 0.849298,
-  0.816952, 0.870522, 0.899609, 0.841014,
-  0.795122, 0.923079, 0.864671, 0.852164,
-  0.834744, 0.963428, 0.881483, 0.776253,
-  0.942036, 0.859765, 0.857380, 0.915745,
-  0.784842, 0.969661, 0.919484, 0.879202,
-  0.966006, 0.760651, 0.972971, 0.964370,
-  1.0, 1.0, 1.0, 1.0,
-  1.0, 1.0, 1.0, 1.0,
-  1.0, 1.0, 1.0, 1.0,
-};
+
+double GetRotatorGains(int i) {
+  static const double kRotatorGains[kNumRotators] = {
+    1.050645, 1.948438, 3.050339, 3.967913,
+    4.818584, 5.303335, 5.560281, 5.490826,
+    5.156689, 4.547374, 3.691308, 2.666868,
+    1.539254, 0.656948, 0.345893, 0.327111,
+    0.985318, 1.223506, 0.447645, 0.830961,
+    1.075181, 0.613335, 0.902695, 0.855391,
+    0.817774, 0.823359, 0.841483, 0.838562,
+    0.831912, 0.808731, 0.865214, 0.808036,
+    0.850837, 0.821305, 0.839458, 0.829195,
+    0.836373, 0.827271, 0.836018, 0.834514,
+    0.825624, 0.836999, 0.833990, 0.832992,
+    0.830897, 0.832593, 0.846116, 0.824796,
+    0.829331, 0.844509, 0.838830, 0.821733,
+    0.840738, 0.841735, 0.827570, 0.838581,
+    0.837742, 0.834965, 0.842970, 0.832145,
+    0.847596, 0.840942, 0.830891, 0.850632,
+    0.841468, 0.838383, 0.841493, 0.855118,
+    0.826750, 0.848000, 0.874356, 0.812177,
+    0.849037, 0.893550, 0.832527, 0.827986,
+    0.877198, 0.851760, 0.846317, 0.883044,
+    0.843178, 0.856925, 0.857045, 0.860695,
+    0.894345, 0.870391, 0.839519, 0.870541,
+    0.870573, 0.902951, 0.871798, 0.818328,
+    0.871413, 0.921101, 0.863915, 0.793014,
+    0.936519, 0.888107, 0.856968, 0.821018,
+    0.987345, 0.904846, 0.783447, 0.973613,
+    0.903628, 0.875688, 0.931024, 0.992087,
+    0.806914, 1.050332, 0.942569, 0.800870,
+    1.210426, 0.916555, 0.817352, 1.126946,
+    0.985119, 0.922530, 0.994633, 0.959602,
+    0.381419, 1.879201, 2.078451, 0.475196,
+    0.952731, 1.709305, 1.383894, 1.557669,
+  };
+  return kRotatorGains[i];
+}
 
 struct PerChannel {
   // [0..1] is for real and imag of 1st leaking accumulation
@@ -177,11 +181,14 @@ struct Rotators {
     // Approximate filter delay. TODO: optimize this value along with gain values.
     // Recordings can sound better with -2.32 as it pushes the bass signals a bit earlier
     // and likely compensates human hearing's deficiency for temporal separation.
-    return static_cast<int>(-2.20573/log(window));
+    const double kMagic = -2.2028003503591482;
+    const double kAlmostHalfForRounding = 0.4687;
+    return static_cast<int>(kMagic/log(window) + kAlmostHalfForRounding);
   }
 
   Rotators() { }
-  Rotators(int num_channels, std::vector<double> frequency, const double sample_rate) {
+  Rotators(int num_channels, std::vector<double> frequency,
+           std::vector<double> filter_gains, const double sample_rate) {
     channel.resize(num_channels);
     for (int i = 0; i < kNumRotators; ++i) {
       // The parameter relates to the frequency shape overlap and window length
@@ -193,7 +200,7 @@ struct Rotators {
       float windowM1 = 1.0f - window[i];
       max_delay_ = std::max(max_delay_, delay[i]);
       float f = frequency[i] * 2.0f * M_PI / sample_rate;
-      gain[i] = absl::GetFlag(FLAGS_gain) * kRotatorGains[i] * pow(windowM1, 3.0);
+      gain[i] = filter_gains[i] * absl::GetFlag(FLAGS_gain) * pow(windowM1, 3.0);
       rot[0][i] = float(std::cos(f));
       rot[1][i] = float(-std::sin(f));
       rot[2][i] = sqrt(gain[i]);
@@ -303,8 +310,10 @@ struct RotatorFilterBank {
     std::vector<double> freqs(num_rotators);
     for (size_t i = 0; i < num_rotators_; ++i) {
       freqs[i] = BarkFreq(static_cast<double>(i) / (num_rotators_ - 1));
+      // printf("%d %g\n", i, freqs[i]);
     }
-    rotators_ = new Rotators(num_channels, freqs, samplerate);
+    rotators_ = new Rotators(num_channels, freqs, filter_gains, samplerate);
+
     max_delay_ = rotators_[0].max_delay_;
     QCHECK_LE(max_delay_, kBlockSize);
     fprintf(stderr, "Rotator bank output delay: %zu\n", max_delay_);
@@ -648,12 +657,14 @@ void Process(
   }
   err /= total_out;
   double psnr = -10.0 * std::log(err) / std::log(10.0);
+  fprintf(stdout, "score=%.15g\n", err);
   fprintf(stderr, "MSE: %f  PSNR: %f\n", err, psnr);
 }
 
-void RecomputeFiltrGains(std::vector<double>& filter_gains) {
-  for (int iter = 0; iter < 20; ++iter) {
-    InputSignal in("impulse:10000:6000:1");
+void RecomputeFilterGains(std::vector<double>& filter_gains) {
+  for (int iter = 0; iter < 10000; ++iter) {
+    float optsum = 0;
+    InputSignal in("impulse:16384:6000:1");
     OutputSignal out(1, 1, 48000, true);
     Process(in, out, IDENTITY, filter_gains);
     auto fft = out.output_fft();
@@ -665,9 +676,19 @@ void RecomputeFiltrGains(std::vector<double>& filter_gains) {
       size_t f1 = f0 + 1;
       double gain = std::abs(fft[f0]) * (scaled_f - f0) +
                     std::abs(fft[f1]) * (f1 - scaled_f);
-      filter_gains[i] /= gain;
+      optsum += fabs(gain - 1.0);
+      filter_gains[i] /= pow(gain, 0.8 - 0.7 * iter / 10000);
+      filter_gains[i] = pow(filter_gains[i], 0.9999);
+    }
+    std::vector<double> tmp = filter_gains;
+    for (size_t i = 0; i < kNumRotators; ++i) {
+      if (i >= 1 && i < kNumRotators - 1) {
+        filter_gains[i] *= 0.99999;
+        filter_gains[i] += 0.000005 * (tmp[i - 1] + tmp[i + 1]);
+      }
       fprintf(stderr, " %f,%s", filter_gains[i], i % 4 == 3 ? "\n  " : "");
     }
+    fprintf(stderr, "optsum %g\n", optsum);
   }
 }
 
@@ -796,7 +817,12 @@ int main(int argc, char** argv) {
     output.SetWavFile(posargs[2]);
   }
 
-  std::vector<double> filter_gains(kRotatorGains, kRotatorGains + kNumRotators);
+  std::vector<double> filter_gains;
+  for (int i = 0; i < kNumRotators; ++i) {
+    filter_gains.push_back(GetRotatorGains(i));
+  }
+  //  RecomputeFilterGains(filter_gains);
+
   Process(input, output, mode, filter_gains);
   CreatePlot(input, output, mode);
 }

@@ -85,6 +85,7 @@ def Eval(vec, command, cached=True):
     vec[0] = eval_hash[key]
     return
 
+  print("running ", command)
   process = subprocess.Popen(
       command,
       stdout=subprocess.PIPE,
