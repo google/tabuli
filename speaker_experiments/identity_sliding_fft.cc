@@ -43,7 +43,7 @@ ABSL_FLAG(std::string, filter_mode, "identity", "Filter mode.");
 namespace {
 
 template<typename T>
-std::vector<std::complex<double>> FFT(const std::vector<T>& x) {
+std::vector<std::complex<float>> FFT(const std::vector<T>& x) {
   size_t N = x.size();
   QCHECK((N & (N - 1)) == 0) << "FFT length must be power of two";
   size_t n = 0;
@@ -62,23 +62,23 @@ std::vector<std::complex<double>> FFT(const std::vector<T>& x) {
     }
     return r;
   };
-  auto butterfly = [](const std::complex<double>& m,
-                      std::complex<double>& a, std::complex<double>& b) {
-    std::complex<double> A = a;
-    std::complex<double> B = m * b;
+  auto butterfly = [](const std::complex<float>& m,
+                      std::complex<float>& a, std::complex<float>& b) {
+    std::complex<float> A = a;
+    std::complex<float> B = m * b;
     a = A + B;
     b = A - B;
   };
-  std::vector<std::complex<double>> X(N);
+  std::vector<std::complex<float>> X(N);
   for (size_t i = 0; i < N; ++i) {
     X[bit_reverse(i)] = x[i];
   }
   for (size_t s = 1; s <= n; ++s) {
     size_t m = 1 << s;
-    double freq = 2 * M_PI / m;
-    std::complex<double> mul = {std::cos(freq), -std::sin(freq)};
+    float freq = 2 * M_PI / m;
+    std::complex<float> mul = {std::cos(freq), -std::sin(freq)};
     for (size_t k = 0; k < N; k += m) {
-      std::complex<double> omega = {1, 0};
+      std::complex<float> omega = {1, 0};
       for (size_t j = 0; j < m/ 2; ++j) {
         butterfly(omega, X[k + j], X[k + j + m / 2]);
         omega *= mul;
@@ -117,8 +117,8 @@ FilterMode GetFilterMode() {
 }
 
 
-double GetRotatorGains(int i) {
-  static const double kRotatorGains[kNumRotators] = {
+float GetRotatorGains(int i) {
+  static const float kRotatorGains[kNumRotators] = {
     1.050645, 1.948438, 3.050339, 3.967913,
     4.818584, 5.303335, 5.560281, 5.490826,
     5.156689, 4.547374, 3.691308, 2.666868,
@@ -177,18 +177,18 @@ struct Rotators {
   int16_t advance[kNumRotators] = { 0 };
   int16_t max_delay_ = 0;
 
-  int FindMedian3xLeaker(double window) {
+  int FindMedian3xLeaker(float window) {
     // Approximate filter delay. TODO: optimize this value along with gain values.
     // Recordings can sound better with -2.32 as it pushes the bass signals a bit earlier
     // and likely compensates human hearing's deficiency for temporal separation.
-    const double kMagic = -2.2028003503591482;
-    const double kAlmostHalfForRounding = 0.4687;
+    const float kMagic = -2.2028003503591482;
+    const float kAlmostHalfForRounding = 0.4687;
     return static_cast<int>(kMagic/log(window) + kAlmostHalfForRounding);
   }
 
   Rotators() { }
-  Rotators(int num_channels, std::vector<double> frequency,
-           std::vector<double> filter_gains, const double sample_rate) {
+  Rotators(int num_channels, std::vector<float> frequency,
+           std::vector<float> filter_gains, const float sample_rate) {
     channel.resize(num_channels);
     for (int i = 0; i < kNumRotators; ++i) {
       // The parameter relates to the frequency shape overlap and window length
@@ -273,7 +273,7 @@ struct Rotators {
     }
     return retval;
   }
-  double GetSample(int c, int i, FilterMode mode = IDENTITY) const {
+  float GetSample(int c, int i, FilterMode mode = IDENTITY) const {
     return (mode == IDENTITY ?
             (rot[2][i] * channel[c].accu[4][i] + rot[3][i] * channel[c].accu[5][i]) :
             mode == AMPLITUDE ? std::sqrt(gain[i] * (channel[c].accu[4][i] * channel[c].accu[4][i] +
@@ -282,8 +282,8 @@ struct Rotators {
   }
 };
 
-double BarkFreq(double v) {
-  constexpr double linlogsplit = 0.1;
+float BarkFreq(float v) {
+  constexpr float linlogsplit = 0.1;
   if (v < linlogsplit) {
     return 20.0 + (v / linlogsplit) * 20.0;  // Linear 20-40 Hz.
   } else {
@@ -303,13 +303,13 @@ float HardClip(float v) {
 struct RotatorFilterBank {
   RotatorFilterBank(size_t num_rotators, size_t num_channels,
                     size_t samplerate, size_t num_threads,
-                    const std::vector<double>& filter_gains) {
+                    const std::vector<float>& filter_gains) {
     num_rotators_ = num_rotators;
     num_channels_ = num_channels;
     num_threads_ = num_threads;
-    std::vector<double> freqs(num_rotators);
+    std::vector<float> freqs(num_rotators);
     for (size_t i = 0; i < num_rotators_; ++i) {
-      freqs[i] = BarkFreq(static_cast<double>(i) / (num_rotators_ - 1));
+      freqs[i] = BarkFreq(static_cast<float>(i) / (num_rotators_ - 1));
       // printf("%d %g\n", i, freqs[i]);
     }
     rotators_ = new Rotators(num_channels, freqs, filter_gains, samplerate);
@@ -318,7 +318,7 @@ struct RotatorFilterBank {
     QCHECK_LE(max_delay_, kBlockSize);
     fprintf(stderr, "Rotator bank output delay: %zu\n", max_delay_);
     filter_outputs_.resize(num_rotators);
-    for (std::vector<double>& output : filter_outputs_) {
+    for (std::vector<float>& output : filter_outputs_) {
       output.resize(num_channels_ * kBlockSize, 0.f);
     }
   }
@@ -328,8 +328,8 @@ struct RotatorFilterBank {
 
   // TODO(jyrki): filter all at once in the generic case, filtering one
   // is not memory friendly in this memory tabulation.
-  void FilterOne(size_t f_ix, const double* history, int64_t total_in,
-                 int64_t len, FilterMode mode, double* output) {
+  void FilterOne(size_t f_ix, const float* history, int64_t total_in,
+                 int64_t len, FilterMode mode, float* output) {
     size_t out_ix = 0;
     for (int64_t i = 0; i < len; ++i) {
       int64_t delayed_ix = total_in + i - rotators_->advance[f_ix];
@@ -347,8 +347,8 @@ struct RotatorFilterBank {
     }
   }
 
-  int64_t FilterAllSingleThreaded(const double* history, int64_t total_in, int64_t len,
-                                  FilterMode mode, double* output, size_t output_size) {
+  int64_t FilterAllSingleThreaded(const float* history, int64_t total_in, int64_t len,
+                                  FilterMode mode, float* output, size_t output_size) {
     size_t out_ix = 0;
     for (size_t c = 0; c < num_channels_; ++c) {
       rotators_->OccasionallyRenormalize();
@@ -375,8 +375,8 @@ struct RotatorFilterBank {
     return out_len;
   }
 
-  int64_t FilterAll(const double* history, int64_t total_in, int64_t len,
-                    FilterMode mode, double* output, size_t output_size) {
+  int64_t FilterAll(const float* history, int64_t total_in, int64_t len,
+                    FilterMode mode, float* output, size_t output_size) {
     int select_rot = absl::GetFlag(FLAGS_select_rot);
     auto run = [&](size_t thread) {
       while (true) {
@@ -402,7 +402,7 @@ struct RotatorFilterBank {
                      std::max<int64_t>(0, len - (max_delay_ - total_in)) : len;
     if (mode == IDENTITY || select_rot >= 0) {
       std::fill(output, output + output_size, 0);
-      for (std::vector<double>& filter_output : filter_outputs_) {
+      for (std::vector<float>& filter_output : filter_outputs_) {
         for (int i = 0; i < filter_output.size(); ++i) {
           output[i] += filter_output[i];
           filter_output[i] = 0.f;
@@ -427,20 +427,20 @@ struct RotatorFilterBank {
   size_t num_threads_;
   Rotators *rotators_;
   int64_t max_delay_;
-  std::vector<std::vector<double>> filter_outputs_;
+  std::vector<std::vector<float>> filter_outputs_;
   std::atomic<size_t> next_task_{0};
 };
 
-double SquareError(const double* input_history, const double* output,
+float SquareError(const float* input_history, const float* output,
                    size_t num_channels, size_t total, size_t output_len) {
-  double res = 0.0;
+  float res = 0.0;
   for (size_t i = 0; i < output_len; ++i) {
     int input_ix = i + total;
     size_t histo_ix = num_channels * (input_ix & kHistoryMask);
     for (size_t c = 0; c < num_channels; ++ c) {
-      double in = input_history[histo_ix + c];
-      double out = output[num_channels * i + c];
-      double diff = in - out;
+      float in = input_history[histo_ix + c];
+      float out = output[num_channels * i + c];
+      float diff = in - out;
       res += diff * diff;
     }
   }
@@ -485,7 +485,7 @@ class InputSignal {
   size_t channels() const { return channels_; }
   size_t samplerate() const { return samplerate_; }
 
-  int64_t readf(double* data, size_t nframes) {
+  int64_t readf(float* data, size_t nframes) {
     if (input_file_) {
       int64_t read = input_file_->readf(data, nframes);
       if (signal_f_) {
@@ -501,9 +501,9 @@ class InputSignal {
     }
     int64_t len = signal_args_[0];
     int64_t delay = signal_args_[1];
-    double amplitude = signal_args_[2];
-    double frequency = signal_type_ == SignalType::SINE ? signal_args_[3] : 0.0;
-    double mul = 2 * M_PI * frequency / samplerate_;
+    float amplitude = signal_args_[2];
+    float frequency = signal_type_ == SignalType::SINE ? signal_args_[3] : 0.0;
+    float mul = 2 * M_PI * frequency / samplerate_;
     nframes = std::min<int64_t>(len - input_ix_, nframes);
     for (size_t i = 0; i < nframes; ++i) {
       for (size_t c = 0; c < channels_; ++c) {
@@ -530,7 +530,7 @@ class InputSignal {
     SINE,
   };
   SignalType signal_type_;
-  std::vector<double> signal_args_;
+  std::vector<float> signal_args_;
   FILE* signal_f_ = nullptr;
   int64_t input_ix_ = 0;
   size_t channels_;
@@ -546,7 +546,7 @@ class OutputSignal {
         samplerate_(samplerate), save_output_(save_output) {
   }
 
-  void writef(const double* data, size_t nframes) {
+  void writef(const float* data, size_t nframes) {
     if (output_file_) {
       output_file_->writef(data, nframes);
     }
@@ -571,7 +571,7 @@ class OutputSignal {
     }
   }
 
-  std::vector<std::complex<double>> output_fft() {
+  std::vector<std::complex<float>> output_fft() {
     size_t N = 1;
     while (N < 2 * output_.size()) N <<= 1;
     output_.resize(N);
@@ -592,7 +592,7 @@ class OutputSignal {
     }
   }
 
-  const std::vector<double>& output() { return output_; }
+  const std::vector<float>& output() { return output_; }
   size_t channels() const { return channels_; }
   size_t frame_size() const { return channels_ * freq_channels_; }
   size_t num_frames() const { return output_.size() / frame_size(); }
@@ -602,20 +602,20 @@ class OutputSignal {
   size_t freq_channels_;
   size_t samplerate_;
   bool save_output_;
-  std::vector<double> output_;
+  std::vector<float> output_;
   std::unique_ptr<SndfileHandle> output_file_;
 };
 
 template <typename In, typename Out>
 void Process(
     In& input_stream, Out& output_stream, FilterMode mode,
-    const std::vector<double>& filter_gains = {},
+    const std::vector<float>& filter_gains = {},
     const std::function<void()>& start_progress = [] {},
     const std::function<void(int64_t)>& set_progress = [](int64_t written) {}) {
   const size_t num_channels = input_stream.channels();
-  std::vector<double> history(num_channels * kHistorySize);
-  std::vector<double> input(num_channels * kBlockSize);
-  std::vector<double> output(output_stream.frame_size() * kBlockSize);
+  std::vector<float> history(num_channels * kHistorySize);
+  std::vector<float> input(num_channels * kBlockSize);
+  std::vector<float> output(output_stream.frame_size() * kBlockSize);
 
   RotatorFilterBank rotbank(kNumRotators, num_channels,
                             input_stream.samplerate(), /*num_threads=*/1,
@@ -656,12 +656,12 @@ void Process(
     set_progress(total_in);
   }
   err /= total_out;
-  double psnr = -10.0 * std::log(err) / std::log(10.0);
+  float psnr = -10.0 * std::log(err) / std::log(10.0);
   fprintf(stdout, "score=%.15g\n", err);
   fprintf(stderr, "MSE: %f  PSNR: %f\n", err, psnr);
 }
 
-void RecomputeFilterGains(std::vector<double>& filter_gains) {
+void RecomputeFilterGains(std::vector<float>& filter_gains) {
   for (int iter = 0; iter < 10000; ++iter) {
     float optsum = 0;
     InputSignal in("impulse:16384:6000:1");
@@ -669,18 +669,18 @@ void RecomputeFilterGains(std::vector<double>& filter_gains) {
     Process(in, out, IDENTITY, filter_gains);
     auto fft = out.output_fft();
     for (size_t i = 0; i < kNumRotators; ++i) {
-      const double frequency =
-          BarkFreq(static_cast<double>(i) / (kNumRotators - 1));
-      double scaled_f = frequency * fft.size() / 48000;
+      const float frequency =
+          BarkFreq(static_cast<float>(i) / (kNumRotators - 1));
+      float scaled_f = frequency * fft.size() / 48000;
       size_t f0 = scaled_f;
       size_t f1 = f0 + 1;
-      double gain = std::abs(fft[f0]) * (scaled_f - f0) +
+      float gain = std::abs(fft[f0]) * (scaled_f - f0) +
                     std::abs(fft[f1]) * (f1 - scaled_f);
       optsum += fabs(gain - 1.0);
       filter_gains[i] /= pow(gain, 0.8 - 0.7 * iter / 10000);
       filter_gains[i] = pow(filter_gains[i], 0.9999);
     }
-    std::vector<double> tmp = filter_gains;
+    std::vector<float> tmp = filter_gains;
     for (size_t i = 0; i < kNumRotators; ++i) {
       if (i >= 1 && i < kNumRotators - 1) {
         filter_gains[i] *= 0.99999;
@@ -692,9 +692,9 @@ void RecomputeFilterGains(std::vector<double>& filter_gains) {
   }
 }
 
-void ValueToRgb(double val, double good_threshold, double bad_threshold,
+void ValueToRgb(float val, float good_threshold, float bad_threshold,
                 float rgb[3]) {
-  double heatmap[12][3] = {
+  float heatmap[12][3] = {
       {0, 0, 0},       {0, 0, 1},
       {0, 1, 1},       {0, 1, 0},  // Good level
       {1, 1, 0},       {1, 0, 0},  // Bad level
@@ -712,18 +712,18 @@ void ValueToRgb(double val, double good_threshold, double bad_threshold,
     val = 0.45 + (val - bad_threshold) / (bad_threshold * 12) * 0.5;
   }
   static const int kTableSize = sizeof(heatmap) / sizeof(heatmap[0]);
-  val = std::min<double>(std::max<double>(val * (kTableSize - 1), 0.0),
+  val = std::min<float>(std::max<float>(val * (kTableSize - 1), 0.0),
                            kTableSize - 2);
   int ix = static_cast<int>(val);
   ix = std::min(std::max(0, ix), kTableSize - 2);  // Handle NaN
-  double mix = val - ix;
+  float mix = val - ix;
   for (int i = 0; i < 3; ++i) {
-    double v = mix * heatmap[ix + 1][i] + (1 - mix) * heatmap[ix][i];
+    float v = mix * heatmap[ix + 1][i] + (1 - mix) * heatmap[ix][i];
     rgb[i] = pow(v, 0.5);
   }
 }
 
-void PhaseToRgb(double phase, float rgb[3]) {
+void PhaseToRgb(float phase, float rgb[3]) {
   phase /= M_PI;
   phase += 1;
   if (phase < 1.0 / 3) {
@@ -740,7 +740,7 @@ void PhaseToRgb(double phase, float rgb[3]) {
   }
 }
 
-void GetPixelValue(double sample, FilterMode mode, uint8_t* out) {
+void GetPixelValue(float sample, FilterMode mode, uint8_t* out) {
   float rgb[3] = {};
   if (mode == AMPLITUDE) {
     ValueToRgb(sample, 0.01, 0.05, rgb);
@@ -754,7 +754,7 @@ void GetPixelValue(double sample, FilterMode mode, uint8_t* out) {
 
 void CreatePlot(InputSignal& input, OutputSignal& output, FilterMode mode) {
   if (absl::GetFlag(FLAGS_ppm)) {
-    const std::vector<double>& out = output.output();
+    const std::vector<float>& out = output.output();
     FILE* f = fopen("/tmp/result.ppm", "wb");
     size_t xsize = std::min<size_t>(output.num_frames(), 1 << 14);
     size_t ysize = output.frame_size();
@@ -762,7 +762,7 @@ void CreatePlot(InputSignal& input, OutputSignal& output, FilterMode mode) {
     for (size_t y = 0; y < ysize; ++y) {
       std::vector<uint8_t> line(3 * xsize);
       for (size_t x = 0; x < xsize; ++x) {
-        double sample = out[x * ysize + y];
+        float sample = out[x * ysize + y];
         GetPixelValue(sample, mode, &line[3 * x]);
       }
       fwrite(line.data(), xsize, 3, f);
@@ -817,7 +817,7 @@ int main(int argc, char** argv) {
     output.SetWavFile(posargs[2]);
   }
 
-  std::vector<double> filter_gains;
+  std::vector<float> filter_gains;
   for (int i = 0; i < kNumRotators; ++i) {
     filter_gains.push_back(GetRotatorGains(i));
   }
