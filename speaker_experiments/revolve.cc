@@ -281,35 +281,6 @@ struct RotatorFilterBank {
   ~RotatorFilterBank() {
     delete rotators_;
   }
-
-  int64_t FilterAllSingleThreaded(const float* history, int64_t total_in, int64_t len,
-                                  float* output, size_t output_size) {
-    size_t out_ix = 0;
-    for (size_t c = 0; c < num_channels_; ++c) {
-      rotators_->OccasionallyRenormalize();
-    }
-    for (int64_t i = 0; i < len; ++i) {
-      for (size_t c = 0; c < num_channels_; ++c) {
-        for (int k = 0; k < kNumRotators; ++k) {
-          int64_t delayed_ix = total_in + i - rotators_->advance[k];
-          size_t histo_ix = num_channels_ * (delayed_ix & kHistoryMask);
-          float delayed = history[histo_ix + c];
-          rotators_->AddAudio(c, k, delayed);
-        }
-      }
-      rotators_->IncrementAll();
-      if (total_in + i >= max_delay_) {
-        for (size_t c = 0; c < num_channels_; ++c) {
-          output[out_ix * num_channels_ + c] = HardClip(rotators_->GetSampleAll(c));
-        }
-        ++out_ix;
-      }
-    }
-    size_t out_len = total_in < max_delay_ ?
-                     std::max<int64_t>(0, len - (max_delay_ - total_in)) : len;
-    return out_len;
-  }
-
   size_t num_rotators_;
   size_t num_channels_;
   Rotators *rotators_;
@@ -334,7 +305,8 @@ struct MultiChannelDriverModel {
     dpos.resize(n);
   }
   void Convert(float *p, size_t n) {
-    // This number relates to the resonance frequence of the speakers. I suspect I have around ~100 Hz.
+    // This number relates to the resonance frequence of the speakers.
+    // I suspect I have around ~100 Hz.
     // It is an ad hoc formula.
     const float kResonance = 100.0;
     // Funny constant -- perhaps from 1.0 / (2 * pi * samplerate),
@@ -399,9 +371,10 @@ void Process(
   }
 
   int64_t total_in = 0;
+  bool extend_the_end = true;
   for (;;) {
     int64_t out_ix = 0;
-    const int64_t read = input_stream.readf(input.data(), kBlockSize);
+    int64_t read = input_stream.readf(input.data(), kBlockSize);
     for (int i = 0; i < read; ++i) {
       int input_ix = i + total_in;
       history[2 * (input_ix & kHistoryMask) + 0] = input[2 * i];
@@ -409,11 +382,21 @@ void Process(
     }
     printf("read %d\n", int(read));
     if (read == 0) {
-      break;
+      if (extend_the_end) {
+        // Empty the filters and the history.
+        extend_the_end = false;
+        read = rfb.max_delay_;
+        printf("empty the history buffer %d\n", int(read));
+        for (int i = 0; i < read; ++i) {
+          int input_ix = i + total_in;
+          history[2 * (input_ix & kHistoryMask) + 0] = 0;
+          history[2 * (input_ix & kHistoryMask) + 1] = 0;
+        }
+      } else {
+        break;
+      }
     }
-    for (size_t c = 0; c < kNumRotators; ++c) {
-      rfb.rotators_->OccasionallyRenormalize();
-    }
+    rfb.rotators_->OccasionallyRenormalize();
     for (int i = 0; i < read; ++i) {
       for (int rot = 0; rot < kNumRotators; ++rot) {
         for (size_t c = 0; c < 2; ++c) {
@@ -426,8 +409,8 @@ void Process(
       rfb.rotators_->IncrementAll();
       for (int rot = 0; rot < kNumRotators; ++rot) {
         const float ratio =
-            ActualLeftToRightRatio(rfb.rotators_->channel[0].LenSqr(rot),
-                                   rfb.rotators_->channel[1].LenSqr(rot));
+            ActualLeftToRightRatio(rfb.rotators_->channel[1].LenSqr(rot),
+                                   rfb.rotators_->channel[0].LenSqr(rot));
         const float subspeaker_index =
             (std::lower_bound(speaker_to_ratio_table.begin(),
                               speaker_to_ratio_table.end(), ratio,
@@ -436,17 +419,13 @@ void Process(
         float stage_size = 1.3; // meters
         float distance_from_center = stage_size * (subspeaker_index - 0.5 * (output_channels - 1)) / (output_channels - 1);
         float assumed_distance_to_line = stage_size * 1.6;
-        float distance_to_virtual = sqrt(distance_from_center * distance_from_center +
-                                         assumed_distance_to_line * assumed_distance_to_line);
-        float dist_ratio = distance_to_virtual * (1.0f / assumed_distance_to_line);
-        float index = static_cast<float>(subspeaker_index);
         float right, center, left;
         rfb.rotators_->GetTriplet(subspeaker_index / (output_channels - 1),
                                   rot,
-                                  rfb.rotators_->channel[0].accu[4][rot],
-                                  rfb.rotators_->channel[0].accu[5][rot],
                                   rfb.rotators_->channel[1].accu[4][rot],
                                   rfb.rotators_->channel[1].accu[5][rot],
+                                  rfb.rotators_->channel[0].accu[4][rot],
+                                  rfb.rotators_->channel[0].accu[5][rot],
                                   right, center, left);
         float speaker_offset_left = (2 - 7.5) * 0.1;
         float speaker_offset_right = (13 - 7.5) * 0.1;
