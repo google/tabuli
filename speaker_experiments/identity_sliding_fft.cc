@@ -96,8 +96,6 @@ bool CheckPosition(int64_t pos) {
   return true;
 }
 
-constexpr int64_t kNumRotators = 128;
-
 enum FilterMode {
   IDENTITY,
   AMPLITUDE,
@@ -116,6 +114,7 @@ FilterMode GetFilterMode() {
   QCHECK(0);
 }
 
+constexpr int64_t kNumRotators = 128;
 
 float GetRotatorGains(int i) {
   static const float kRotatorGains[kNumRotators] = {
