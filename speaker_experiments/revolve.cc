@@ -230,9 +230,10 @@ struct Rotators {
                   float &right,
                   float &center,
                   float &left) {
-    float aver = 0.5 * (rightr + leftr);
-    float avei = 0.5 * (righti + lefti);
-    center = rot[2][rot_ix] * aver + rot[3][rot_ix] * avei;
+    float aver = rightr + leftr;
+    float avei = righti + lefti;
+    // not sure about the 0.5 on next line -- perhaps 1.0 is better?
+    center = 0.5 * (rot[2][rot_ix] * aver + rot[3][rot_ix] * avei);
 
     rightr -= left_to_right_ratio * aver;
     righti -= left_to_right_ratio * avei;

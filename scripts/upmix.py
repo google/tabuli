@@ -35,7 +35,7 @@ file = sys.argv[1]
 print("playing", file)
 run('cp "' + file + '" /tmp/input.wav')
 
-run("sox /tmp/input.wav -b 24 /tmp/down-dry.wav gain -10 rate 48k trim 0 60")
+run("sox /tmp/input.wav -b 24 /tmp/down-dry.wav gain -10 rate 48k") # trim 0 60")
 
 run("./build/revolve /tmp/down-dry.wav /tmp/16speakers.wav")
 
