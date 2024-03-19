@@ -338,6 +338,12 @@ struct BinauralModel {
   void WriteWithDelay(int c, int delay, float v) {
     channel[c][(index + delay) & 0x1f] += v;
   }
+  void WriteWithFloatDelay(int c, float float_delay, float v) {
+    int delay = floor(float_delay);
+    float frac = float_delay - delay;
+    WriteWithDelay(c, delay, v * (1.0 - frac));
+    WriteWithDelay(c, delay + 1, v * frac);
+  }
 };
 
 float *GetBinauralTable() {
@@ -363,7 +369,7 @@ float *GetBinauralTable() {
   static float table[kNumRotators * 16];
   for (int i = 0; i < kNumRotators; ++i) {
     for (int k = 0; k < 16; ++k) {
-      table[i * 16 + k] = pow(binau[k], i / 128.0);
+      table[i * 16 + k] = pow(binau[k], i / 512.0);
     }
   }
   return table;
@@ -449,11 +455,17 @@ void Process(
         const float ratio =
             ActualLeftToRightRatio(rfb.rotators_->channel[1].LenSqr(rot),
                                    rfb.rotators_->channel[0].LenSqr(rot));
-        const float subspeaker_index =
+        float subspeaker_index =
             (std::lower_bound(speaker_to_ratio_table.begin(),
                               speaker_to_ratio_table.end(), ratio,
                               std::greater<>()) -
              speaker_to_ratio_table.begin()) * (1.0 / kSubSourcePrecision);
+        if (subspeaker_index < 1.0) {
+          subspeaker_index = 1.0;
+        }
+        if (subspeaker_index >= 14.0) {
+          subspeaker_index = 14.0;
+        }
         float stage_size = 1.3; // meters
         float distance_from_center = stage_size * (subspeaker_index - 0.5 * (output_channels - 1)) / (output_channels - 1);
         float assumed_distance_to_line = stage_size * 1.6;
@@ -465,27 +477,38 @@ void Process(
                                   rfb.rotators_->channel[0].accu[4][rot],
                                   rfb.rotators_->channel[0].accu[5][rot],
                                   right, center, left);
-        float speaker_offset_left = (2 - 7.5) * 0.1;
-        float speaker_offset_right = (13 - 7.5) * 0.1;
+        if (total_in + i >= rfb.max_delay_) {
 
 #define BINAURAL
 #ifdef BINAURAL
-        binaural.WriteWithDelay(0, 15, 0.3 * right);
-        binaural.WriteWithDelay(1, 0, 1.4 * right);
-        binaural.WriteWithDelay(1, 15, 0.3 * left);
-        binaural.WriteWithDelay(0, 0, 1.4 * left);
+          // left and right.
+          binaural.WriteWithDelay(1, 22, btable[16 * rot + 13] * left);
+          binaural.WriteWithDelay(0, 8, btable[16 * rot + 2] * left);
+          binaural.WriteWithDelay(0, 22, btable[16 * rot + 13] * right);
+          binaural.WriteWithDelay(1, 8, btable[16 * rot + 2] * right);
+          {
+            // center.
+            int speaker = static_cast<int>(floor(subspeaker_index));
+            float off = subspeaker_index - speaker;
+            float right_gain_0 = btable[16 * rot + speaker];
+            float right_gain_1 = btable[16 * rot + speaker + 1];
+            float right_gain = (1.0 - off) * right_gain_0 + off * right_gain_1;
+            float left_gain_0 = btable[16 * rot + 15 - speaker];
+            float left_gain_1 = btable[16 * rot + 15 - speaker - 1];
+            float left_gain = (1.0 - off) * left_gain_0 + off * left_gain_1;
+            binaural.WriteWithFloatDelay(0, 17 - subspeaker_index, center * left_gain);
+            binaural.WriteWithFloatDelay(1, 1 + subspeaker_index, center * right_gain);
+          }
 #endif
 
-        if (total_in + i >= rfb.max_delay_) {
+
+          float speaker_offset_left = (2 - 7.5) * 0.1;
+          float speaker_offset_right = (13 - 7.5) * 0.1;
+
           for (int kk = 0; kk < output_channels; ++kk) {
             float speaker_offset = (kk - 7.5) * 0.1;
             float val = AngleEffect(speaker_offset + distance_from_center, assumed_distance_to_line) * center;
             output[out_ix * output_channels + kk] += val;
-
-#ifdef BINAURAL
-            binaural.WriteWithDelay(0, kk, val * btable[16 * rot + kk]);
-            binaural.WriteWithDelay(1, 15 - kk, val * btable[16 * rot + 15 - kk]);
-#endif
 
             output[out_ix * output_channels + kk] +=
                 AngleEffect(speaker_offset - speaker_offset_right, assumed_distance_to_line) * right;
@@ -494,11 +517,13 @@ void Process(
           }
         }
       }
+      if (total_in + i >= rfb.max_delay_) {
 #ifdef BINAURAL
-      binaural.Emit(&binaural_output[out_ix * 2]);
+        binaural.Emit(&binaural_output[out_ix * 2]);
 #endif
-      dm.Convert(&output[out_ix * output_channels], output_channels);
-      ++out_ix;
+        dm.Convert(&output[out_ix * output_channels], output_channels);
+        ++out_ix;
+      }
     }
     output_stream.writef(output.data(), out_ix);
     binaural_output_stream.writef(binaural_output.data(), out_ix);
