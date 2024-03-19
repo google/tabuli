@@ -35,9 +35,9 @@ file = sys.argv[1]
 print("playing", file)
 run('cp "' + file + '" /tmp/input.wav')
 
-run("sox /tmp/input.wav -b 24 /tmp/down-dry.wav gain -10 rate 48k") # trim 0 60")
+run("sox /tmp/input.wav -b 24 /tmp/down-dry.wav gain -10 rate 48k trim 60 10")
 
-run("./build/revolve /tmp/down-dry.wav /tmp/16speakers.wav")
+run("./build/revolve /tmp/down-dry.wav /tmp/16speakers.wav /tmp/stereo2.wav")
 
 #run("sox /tmp/16speakers.wav -e float -b 32 /tmp/stereo.wav remix 1,2,3,4,5,6,7,8 9,10,11,12,13,14,15,16 norm -22")
 mix0 = ",".join(["%d,v%g" % (i + 1, (i + 1) / 256.0) for i in range(16)])

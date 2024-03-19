@@ -210,17 +210,6 @@ struct Rotators {
       }
     }
   }
-  float GetSampleAll(int c) {
-    float retval = 0;
-    for (int i = 0; i < kNumRotators; ++i) {
-      retval += (rot[2][i] * channel[c].accu[4][i] + rot[3][i] * channel[c].accu[5][i]);
-    }
-    return retval;
-  }
-  float GetSample(int c, int i) const {
-    return (rot[2][i] * channel[c].accu[4][i] + rot[3][i] * channel[c].accu[5][i]);
-  }
-
   void GetTriplet(float left_to_right_ratio,
                   int rot_ix,
                   float rightr,
@@ -259,41 +248,36 @@ static constexpr int64_t kBlockSize = 1 << 15;
 static const int kHistorySize = (1 << 18);
 static const int kHistoryMask = kHistorySize - 1;
 
-float HardClip(float v) {
-  return std::max(-1.0f, std::min(1.0f, v));
-}
-
 struct RotatorFilterBank {
   RotatorFilterBank(size_t num_rotators, size_t num_channels,
                     size_t samplerate,
                     const std::vector<float>& filter_gains) {
-    num_rotators_ = num_rotators;
-    num_channels_ = num_channels;
     std::vector<float> freqs(num_rotators);
-    for (size_t i = 0; i < num_rotators_; ++i) {
-      freqs[i] = BarkFreq(static_cast<float>(i) / (num_rotators_ - 1));
+    for (size_t i = 0; i < num_rotators; ++i) {
+      freqs[i] = BarkFreq(static_cast<float>(i) / (num_rotators - 1));
     }
     rotators_ = new Rotators(num_channels, freqs, filter_gains, samplerate);
 
-    max_delay_ = rotators_[0].max_delay_;
+    max_delay_ = rotators_->max_delay_;
     QCHECK_LE(max_delay_, kBlockSize);
     fprintf(stderr, "Rotator bank output delay: %zu\n", max_delay_);
   }
   ~RotatorFilterBank() {
     delete rotators_;
   }
-  size_t num_rotators_;
-  size_t num_channels_;
   Rotators *rotators_;
   int64_t max_delay_;
 };
-
 
 float AngleEffect(float dy, float distance) {
   float dist2 = sqrt(dy * dy + distance * distance);
   float cos_angle = distance / dist2;
   cos_angle = cos_angle * cos_angle * cos_angle;
   return cos_angle;
+}
+
+float HardClip(float v) {
+  return std::max(-1.0f, std::min(1.0f, v));
 }
 
 struct MultiChannelDriverModel {
@@ -318,12 +302,12 @@ struct MultiChannelDriverModel {
     // damping reduces the speed of the membrane passively as it
     // emits energy or converts it to heat in the suspension deformations
     const float damping = 0.99999;
-    const float kSomewhatRandomNonPhysicalPositionRegularization = 0.99999;
+    const float kSomewhatRandomNonPhysicalPositionRegularization = 0.99998;
 
     const float kInputMul = 0.3;
 
     for (int k = 0; k < n; ++k) {
-      float kAve = 0.9999;
+      float kAve = 0.9995;
       ave[k] *= kAve;
       ave[k] += (1.0 - kAve) * p[k];
       float v = kInputMul * (p[k] - ave[k]);
@@ -332,21 +316,74 @@ struct MultiChannelDriverModel {
       pos[k] += dpos[k];
       v += kSuspension * pos[k];
       pos[k] *= kSomewhatRandomNonPhysicalPositionRegularization;
-      p[k] = v;
+      p[k] = HardClip(v);
     }
   }
 };
 
+// Control delays for binaural experience.
+struct BinauralModel {
+  size_t index = 0;
+  float channel[2][128] = { 0 };
+  void GetAndAdvance(float *left_arg, float *right_arg) {
+    *left_arg = HardClip(channel[0][index & 0x1f]);
+    *right_arg = HardClip(channel[1][index & 0x1f]);
+    channel[0][index & 0x1f] = 0;
+    channel[1][index & 0x1f] = 0;
+    ++index;
+  }
+  void Emit(float *p) {
+    GetAndAdvance(p, p + 1);
+  }
+  void WriteWithDelay(int c, int delay, float v) {
+    channel[c][(index + delay) & 0x1f] += v;
+  }
+};
+
+float *GetBinauralTable() {
+  static const float binau[16] = {
+    1.4,
+    1.3,
+    1.2,
+    1.1,
+    1.0,
+    0.9,
+    0.8,
+    0.7,
+
+    0.6,
+    0.5,
+    0.4,
+    0.35,
+    0.3,
+    0.25,
+    0.2,
+    0.15,
+  };
+  static float table[kNumRotators * 16];
+  for (int i = 0; i < kNumRotators; ++i) {
+    for (int k = 0; k < 16; ++k) {
+      table[i * 16 + k] = pow(binau[k], i / 128.0);
+    }
+  }
+  return table;
+}
+
+
+
 template <typename In, typename Out>
 void Process(
     const int output_channels, const double distance_to_interval_ratio,
-    In& input_stream, Out& output_stream) {
+    In& input_stream, Out& output_stream, Out& binaural_output_stream) {
   std::vector<float> history(input_stream.channels() * kHistorySize);
   std::vector<float> input(input_stream.channels() * kBlockSize);
   std::vector<float> output(output_channels * kBlockSize);
+  std::vector<float> binaural_output(2 * kBlockSize);
 
   MultiChannelDriverModel dm;
   dm.Initialize(output_channels);
+  BinauralModel binaural;
+  float *btable = GetBinauralTable();
   constexpr int64_t kNumRotators = 128;
   std::vector<float> freqs(kNumRotators);
   for (size_t i = 0; i < kNumRotators; ++i) {
@@ -430,31 +467,46 @@ void Process(
                                   right, center, left);
         float speaker_offset_left = (2 - 7.5) * 0.1;
         float speaker_offset_right = (13 - 7.5) * 0.1;
+
+#define BINAURAL
+#ifdef BINAURAL
+        binaural.WriteWithDelay(0, 15, 0.3 * right);
+        binaural.WriteWithDelay(1, 0, 1.4 * right);
+        binaural.WriteWithDelay(1, 15, 0.3 * left);
+        binaural.WriteWithDelay(0, 0, 1.4 * left);
+#endif
+
         if (total_in + i >= rfb.max_delay_) {
           for (int kk = 0; kk < output_channels; ++kk) {
             float speaker_offset = (kk - 7.5) * 0.1;
-            output[out_ix * output_channels + kk] +=
-                AngleEffect(speaker_offset + distance_from_center, assumed_distance_to_line) * center;
+            float val = AngleEffect(speaker_offset + distance_from_center, assumed_distance_to_line) * center;
+            output[out_ix * output_channels + kk] += val;
+
+#ifdef BINAURAL
+            binaural.WriteWithDelay(0, kk, val * btable[16 * rot + kk]);
+            binaural.WriteWithDelay(1, 15 - kk, val * btable[16 * rot + 15 - kk]);
+#endif
+
             output[out_ix * output_channels + kk] +=
                 AngleEffect(speaker_offset - speaker_offset_right, assumed_distance_to_line) * right;
             output[out_ix * output_channels + kk] +=
                 AngleEffect(speaker_offset - speaker_offset_left, assumed_distance_to_line) * left;
           }
-          if (rot == kNumRotators - 1) {
-            ++out_ix;
-          }
         }
       }
+#ifdef BINAURAL
+      binaural.Emit(&binaural_output[out_ix * 2]);
+#endif
       dm.Convert(&output[out_ix * output_channels], output_channels);
+      ++out_ix;
     }
     output_stream.writef(output.data(), out_ix);
+    binaural_output_stream.writef(binaural_output.data(), out_ix);
     total_in += read;
     std::fill(output.begin(), output.end(), 0.0);
+    std::fill(binaural_output.begin(), binaural_output.end(), 0.0);
   }
 };
-
-//          output[out_ix * kNumRotators + c] = HardClip(rotators_->GetSampleAll(c));
-
 
 }  // namespace
 
@@ -465,7 +517,7 @@ int main(int argc, char** argv) {
   const float distance_to_interval_ratio =
       absl::GetFlag(FLAGS_distance_to_interval_ratio);
 
-  QCHECK_EQ(argc, 3) << "Usage: " << argv[0] << " <input> <output>";
+  QCHECK_EQ(argc, 4) << "Usage: " << argv[0] << " <input> <multichannel-output> <binaural-headphone-output>";
 
   SndfileHandle input_file(argv[1]);
   QCHECK(input_file) << input_file.strError();
@@ -476,5 +528,9 @@ int main(int argc, char** argv) {
       argv[2], /*mode=*/SFM_WRITE, /*format=*/SF_FORMAT_WAV | SF_FORMAT_PCM_24,
       /*channels=*/output_channels, /*samplerate=*/input_file.samplerate());
 
-  Process(output_channels, distance_to_interval_ratio, input_file, output_file);
+  SndfileHandle binaural_output_file(
+      argv[3], /*mode=*/SFM_WRITE, /*format=*/SF_FORMAT_WAV | SF_FORMAT_PCM_24,
+      /*channels=*/2, /*samplerate=*/input_file.samplerate());
+
+  Process(output_channels, distance_to_interval_ratio, input_file, output_file, binaural_output_file);
 }
