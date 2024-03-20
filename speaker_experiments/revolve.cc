@@ -369,7 +369,7 @@ float *GetBinauralTable() {
   static float table[kNumRotators * 16];
   for (int i = 0; i < kNumRotators; ++i) {
     for (int k = 0; k < 16; ++k) {
-      table[i * 16 + k] = pow(binau[k], i / 512.0);
+      table[i * 16 + k] = pow(binau[k], i / 2048.0);
     }
   }
   return table;
@@ -482,10 +482,19 @@ void Process(
 #define BINAURAL
 #ifdef BINAURAL
           // left and right.
-          binaural.WriteWithDelay(1, 22, btable[16 * rot + 13] * left);
-          binaural.WriteWithDelay(0, 8, btable[16 * rot + 2] * left);
-          binaural.WriteWithDelay(0, 22, btable[16 * rot + 13] * right);
-          binaural.WriteWithDelay(1, 8, btable[16 * rot + 2] * right);
+          {
+            // Some hacks here: 27 samples is roughly 19 cm which I use
+            // as an approximate for the added delay needed for this
+            // kind of left-right 'residual sound'. perhaps it is too
+            // much. perhaps having more than one delay would make sense.
+            //
+            // This computation being left-right and with delay accross
+            // causes a relaxed feeling of space to emerge.
+            binaural.WriteWithDelay(0, 1, btable[16 * rot + 2] * left);
+            binaural.WriteWithDelay(1, 27, 0.1 * btable[16 * rot + 13] * left);
+            binaural.WriteWithDelay(0, 27, 0.1 * btable[16 * rot + 13] * right);
+            binaural.WriteWithDelay(1, 1, btable[16 * rot + 2] * right);
+          }
           {
             // center.
             int speaker = static_cast<int>(floor(subspeaker_index));
@@ -496,8 +505,27 @@ void Process(
             float left_gain_0 = btable[16 * rot + 15 - speaker];
             float left_gain_1 = btable[16 * rot + 15 - speaker - 1];
             float left_gain = (1.0 - off) * left_gain_0 + off * left_gain_1;
-            binaural.WriteWithFloatDelay(0, 17 - subspeaker_index, center * left_gain);
-            binaural.WriteWithFloatDelay(1, 1 + subspeaker_index, center * right_gain);
+            float kDelayMul = 0.5;
+            float delay_p = 0;
+            {
+              // Making delay diffs less in the center maintains
+              // a smaller acoustic picture of the singer.
+              // This relates to Euclidian distances and makes
+              // physical sense, too.
+              float len = (output_channels - 1);
+              float dx = subspeaker_index - 0.5 * len;
+              float dist = sqrt(dx * dx + len * len) - len;
+              if (dx < 0) {
+                dist = -dist;
+              }
+              dist += 0.5 * len;
+              delay_p = dist;
+            }
+
+            float delay_l = 1 + kDelayMul * delay_p;
+            float delay_r = 1 + kDelayMul * ((output_channels - 1) - delay_p);
+            binaural.WriteWithFloatDelay(0, delay_l, center * left_gain);
+            binaural.WriteWithFloatDelay(1, delay_r, center * right_gain);
           }
 #endif
 
