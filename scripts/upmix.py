@@ -35,9 +35,9 @@ file = sys.argv[1]
 print("playing", file)
 run('cp "' + file + '" /tmp/input.wav')
 
-run("sox /tmp/input.wav -b 24 /tmp/down-dry.wav gain -10 rate 48k trim 60 10")
+run("sox /tmp/input.wav -b 24 /tmp/down-dry.wav gain -10 rate 48k")
 
-run("./build/revolve /tmp/down-dry.wav /tmp/16speakers.wav /tmp/stereo2.wav")
+run("./build/revolve /tmp/down-dry.wav /tmp/16speakers.wav /tmp/stereo2.wav"); # & sleep 4; play --ignore-length - < /tmp/stereo2.wav")
 
 run("sox /tmp/stereo2.wav /tmp/stereo3.wav norm -2; play /tmp/stereo3.wav ");
 
