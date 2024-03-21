@@ -37,7 +37,7 @@ namespace {
 constexpr int kSubSourcePrecision = 1000;
 
 float MicrophoneResponse(const float angle) {
-  return 0.5f * (1.25f + std::cos(angle));
+  return 0.5f * (1.0f + std::cos(angle));
 }
 
 float ExpectedLeftToRightRatio(const float angle) {
@@ -152,29 +152,6 @@ struct Rotators {
       advance[i] = max_delay_ - delay[i];
     }
   }
-
-
-  void Increment(int c, int i, float audio) {
-    if (c == 0) {
-      float tr = rot[0][i] * rot[2][i] - rot[1][i] * rot[3][i];
-      float tc = rot[0][i] * rot[3][i] + rot[1][i] * rot[2][i];
-      rot[2][i] = tr;
-      rot[3][i] = tc;
-    }
-    channel[c].accu[0][i] *= window[i];
-    channel[c].accu[1][i] *= window[i];
-    channel[c].accu[2][i] *= window[i];
-    channel[c].accu[3][i] *= window[i];
-    channel[c].accu[4][i] *= window[i];
-    channel[c].accu[5][i] *= window[i];
-    channel[c].accu[0][i] += rot[2][i] * audio;
-    channel[c].accu[1][i] += rot[3][i] * audio;
-    channel[c].accu[2][i] += channel[c].accu[0][i];
-    channel[c].accu[3][i] += channel[c].accu[1][i];
-    channel[c].accu[4][i] += channel[c].accu[2][i];
-    channel[c].accu[5][i] += channel[c].accu[3][i];
-  }
-
   void AddAudio(int c, int i, float audio) {
     audio *= 0.03;
     channel[c].accu[0][i] += rot[2][i] * audio;
@@ -221,8 +198,8 @@ struct Rotators {
                   float &left) {
     float aver = rightr + leftr;
     float avei = righti + lefti;
-    // not sure about the 0.5 on next line -- perhaps 1.0 is better?
-    center = 0.5 * (rot[2][rot_ix] * aver + rot[3][rot_ix] * avei);
+
+    center = rot[2][rot_ix] * aver + rot[3][rot_ix] * avei;
 
     rightr -= left_to_right_ratio * aver;
     righti -= left_to_right_ratio * avei;
@@ -324,19 +301,23 @@ struct MultiChannelDriverModel {
 // Control delays for binaural experience.
 struct BinauralModel {
   size_t index = 0;
-  float channel[2][128] = { 0 };
+  float channel[2][4096] = { 0 };
   void GetAndAdvance(float *left_arg, float *right_arg) {
-    *left_arg = HardClip(channel[0][index & 0x1f]);
-    *right_arg = HardClip(channel[1][index & 0x1f]);
-    channel[0][index & 0x1f] = 0;
-    channel[1][index & 0x1f] = 0;
+    *left_arg = HardClip(channel[0][index & 0xfff]);
+    *right_arg = HardClip(channel[1][index & 0xfff]);
+    /*
+    channel[1][(index + 27) & 0xfff] += 0.01 * channel[0][index & 0xfff];
+    channel[0][(index + 27) & 0xfff] += 0.01 * channel[1][index & 0xfff];
+    */
+    channel[0][index & 0xfff] = 0.0;
+    channel[1][index & 0xfff] = 0.0;
     ++index;
   }
   void Emit(float *p) {
     GetAndAdvance(p, p + 1);
   }
-  void WriteWithDelay(int c, int delay, float v) {
-    channel[c][(index + delay) & 0x1f] += v;
+  void WriteWithDelay(size_t c, size_t delay, float v) {
+    channel[c][(index + delay) & 0xfff] += v;
   }
   void WriteWithFloatDelay(int c, float float_delay, float v) {
     int delay = floor(float_delay);
@@ -369,7 +350,7 @@ float *GetBinauralTable() {
   static float table[kNumRotators * 16];
   for (int i = 0; i < kNumRotators; ++i) {
     for (int k = 0; k < 16; ++k) {
-      table[i * 16 + k] = pow(binau[k], i / 2048.0);
+      table[i * 16 + k] = pow(binau[k], i / 128.0);
     }
   }
   return table;
@@ -483,6 +464,8 @@ void Process(
 #ifdef BINAURAL
           // left and right.
           {
+            //left *= 2.0;
+            //right *= 2.0;
             // Some hacks here: 27 samples is roughly 19 cm which I use
             // as an approximate for the added delay needed for this
             // kind of left-right 'residual sound'. perhaps it is too
@@ -490,10 +473,27 @@ void Process(
             //
             // This computation being left-right and with delay accross
             // causes a relaxed feeling of space to emerge.
-            binaural.WriteWithDelay(0, 1, btable[16 * rot + 2] * left);
-            binaural.WriteWithDelay(1, 27, 0.1 * btable[16 * rot + 13] * left);
-            binaural.WriteWithDelay(0, 27, 0.1 * btable[16 * rot + 13] * right);
-            binaural.WriteWithDelay(1, 1, btable[16 * rot + 2] * right);
+            float lbin = left * 2;
+            float rbin = right * 2;
+            size_t delay = 0;
+            for (int i = 0; i < 5; ++i) {
+
+              binaural.WriteWithDelay(0, delay, lbin);
+              binaural.WriteWithDelay(1, delay, rbin);
+
+              float lt = btable[16 * rot + 15] * lbin;
+              float rt = btable[16 * rot + 15] * rbin;
+
+              // swap:
+              lbin = rt;
+              rbin = lt;
+
+              if (i == 0) {
+                delay += 17;
+              } else {
+                delay += 27;
+              }
+            }
           }
           {
             // center.
@@ -505,7 +505,7 @@ void Process(
             float left_gain_0 = btable[16 * rot + 15 - speaker];
             float left_gain_1 = btable[16 * rot + 15 - speaker - 1];
             float left_gain = (1.0 - off) * left_gain_0 + off * left_gain_1;
-            float kDelayMul = 0.5;
+            float kDelayMul = 0.15;
             float delay_p = 0;
             {
               // Making delay diffs less in the center maintains
