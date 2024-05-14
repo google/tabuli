@@ -46,7 +46,7 @@ double ActualLeftToRightRatio(const double squared_left,
 }
 
 double FindMedian3xLeaker(double window) {
-  return static_cast<int>(-2.32/log(window));  // Approximate filter delay.
+  return static_cast<int>(-2.32 / log(window));  // Approximate filter delay.
 }
 
 double CalcReverbRatio(double frequency) {
@@ -239,8 +239,7 @@ class TaskExecutor {
 
 template <typename In, typename Out>
 void Process(
-    const int output_channels,
-    In& input_stream, Out& output_stream,
+    const int output_channels, In& input_stream, Out& output_stream,
     const std::function<void()>& start_progress = [] {},
     const std::function<void(int64_t)>& set_progress = [](int64_t written) {}) {
   std::vector<double> history(input_stream.channels() * kHistorySize);
@@ -308,6 +307,6 @@ int main(int argc, char** argv) {
       /*channels=*/output_channels, /*samplerate=*/input_file.samplerate());
 
   Process(
-      output_channels, input_file, output_file,
-      [] {}, [](const int64_t written) {});
+      output_channels, input_file, output_file, [] {},
+      [](const int64_t written) {});
 }

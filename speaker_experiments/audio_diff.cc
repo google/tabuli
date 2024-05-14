@@ -30,7 +30,7 @@
 namespace {
 
 int FindMedian3xLeaker(double window) {
-  return static_cast<int>(-2.32/log(window));  // Approximate filter delay.
+  return static_cast<int>(-2.32 / log(window));  // Approximate filter delay.
   /*
   double windowM1 = 1.0 - window;
   double half_way_to_total_sum = 1e99;
@@ -60,7 +60,7 @@ constexpr int64_t kNumRotators = 128;
 
 struct Rotator {
   std::complex<double> rot[4] = {{1, 0}, 0};
-  double window = std::pow(0.9996, 128.0/kNumRotators);  // at 40 Hz.
+  double window = std::pow(0.9996, 128.0 / kNumRotators);  // at 40 Hz.
   double windowM1 = 1 - window;
   std::complex<double> exp_mia;
   int advance = 0;
@@ -110,14 +110,13 @@ static const int kHistoryMask = kHistorySize - 1;
 
 class TaskExecutor {
  public:
-  TaskExecutor(size_t num_threads)
-      : thread_outputs_(num_threads) {
-  }
+  TaskExecutor(size_t num_threads) : thread_outputs_(num_threads) {}
   double error_ = 0;
 
-  void Execute(size_t num_tasks,
-               size_t read, size_t total, const double* history, Rotator* rot_left, Rotator* rot_right,
-               size_t read2, size_t total2, const double* history2, Rotator* rot_left2, Rotator* rot_right2) {
+  void Execute(size_t num_tasks, size_t read, size_t total,
+               const double* history, Rotator* rot_left, Rotator* rot_right,
+               size_t read2, size_t total2, const double* history2,
+               Rotator* rot_left2, Rotator* rot_right2) {
     read_ = read;
     total_ = total;
     history_ = history;
@@ -184,9 +183,7 @@ class TaskExecutor {
 };
 
 template <typename In>
-void Process(
-    In& input_stream, In& input_stream2,
-    double *error) {
+void Process(In& input_stream, In& input_stream2, double* error) {
   std::vector<double> history(input_stream.channels() * kHistorySize);
   std::vector<double> input(input_stream.channels() * kBlockSize);
 
@@ -231,9 +228,9 @@ void Process(
     if (read == 0) break;
     if (read2 == 0) break;
 
-    pool.Execute(kNumRotators,
-                 read, total, history.data(), rot_left.data(), rot_right.data(),
-                 read2, total, history2.data(), rot_left2.data(), rot_right2.data());
+    pool.Execute(kNumRotators, read, total, history.data(), rot_left.data(),
+                 rot_right.data(), read2, total, history2.data(),
+                 rot_left2.data(), rot_right2.data());
 
     total += read;
   }
