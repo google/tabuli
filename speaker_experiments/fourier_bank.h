@@ -15,6 +15,7 @@
 
 #include "absl/log/check.h"
 #include "absl/strings/str_split.h"
+#include "hwy/aligned_allocator.h"
 #include "sndfile.hh"
 
 namespace tabuli {
@@ -45,7 +46,8 @@ struct Rotators {
   // Values inserted into the rotators are multiplied with this rotator in both
   // input and output, leading to a total gain multiplication if the length is
   // at sqrt(gain).
-  float rot[4][kNumRotators] = {0};
+  hwy::AlignedNDArray<float, 2> rot =
+      hwy::AlignedNDArray<float, 2>({4, kNumRotators});
   std::vector<PerChannel> channel;
   // Accu has the channel related data, everything else the same between
   // channels.
@@ -79,21 +81,21 @@ float HardClip(float v);
 
 struct RotatorFilterBank {
   RotatorFilterBank(size_t num_rotators, size_t num_channels, size_t samplerate,
-                    size_t num_threads, const std::vector<float> &filter_gains,
+                    size_t num_threads, const std::vector<float>& filter_gains,
                     float global_gain);
   ~RotatorFilterBank() = default;
 
   // TODO(jyrki): filter all at once in the generic case, filtering one
   // is not memory friendly in this memory tabulation.
-  void FilterOne(size_t f_ix, const float *history, int64_t total_in,
-                 int64_t len, FilterMode mode, float *output);
+  void FilterOne(size_t f_ix, const float* history, int64_t total_in,
+                 int64_t len, FilterMode mode, float* output);
 
-  int64_t FilterAllSingleThreaded(const float *history, int64_t total_in,
-                                  int64_t len, FilterMode mode, float *output,
+  int64_t FilterAllSingleThreaded(const float* history, int64_t total_in,
+                                  int64_t len, FilterMode mode, float* output,
                                   size_t output_size);
 
-  int64_t FilterAll(const float *history, int64_t total_in, int64_t len,
-                    FilterMode mode, float *output, size_t output_size);
+  int64_t FilterAll(const float* history, int64_t total_in, int64_t len,
+                    FilterMode mode, float* output, size_t output_size);
 
   size_t num_rotators_;
   size_t num_channels_;

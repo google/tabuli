@@ -20,7 +20,10 @@ target_link_libraries(fourier_bank
   absl::flags_parse
   absl::log
   absl::log_internal_check_impl
+  hwy
 )
+set(CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} -mavx2")
+target_include_directories(fourier_bank PRIVATE speaker_experiments)
 
 foreach (experiment IN ITEMS angular emphasizer revolve spectrum_similarity two_to_three virtual_speakers identity_sliding_fft audio_diff)
   add_executable(${experiment} speaker_experiments/${experiment}.cc)

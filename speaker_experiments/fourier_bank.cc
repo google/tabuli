@@ -14,9 +14,45 @@
 
 #include "absl/log/check.h"
 #include "absl/strings/str_split.h"
+#include "hwy/aligned_allocator.h"
 #include "sndfile.hh"
 
+#undef HWY_TARGET_INCLUDE
+#define HWY_TARGET_INCLUDE "fourier_bank.cc"
+#include "hwy/foreach_target.h"  // IWYU pragma: keep
+// Must come after foreach_target.h to avoid redefinition errors.
+#include "hwy/highway.h"
+
+// This is Highway magic conventions.
+HWY_BEFORE_NAMESPACE();
 namespace tabuli {
+namespace HWY_NAMESPACE {
+
+const hwy::HWY_NAMESPACE::ScalableTag<float> d;
+using Vec = hwy::HWY_NAMESPACE::Vec<decltype(d)>;
+
+void HwyIncrementAll(hwy::AlignedNDArray<float, 2>& rot) {
+  for (int i = 0; i < kNumRotators; i += Lanes(d)) {
+    const Vec tr = MulAdd(
+        Load(d, rot[{0}].data() + i), Load(d, rot[{2}].data() + i),
+        Neg(Mul(Load(d, rot[{1}].data() + i), Load(d, rot[{3}].data() + i))));
+    const Vec tc =
+        MulAdd(Load(d, rot[{0}].data() + i), Load(d, rot[{2}].data() + i),
+               Mul(Load(d, rot[{1}].data() + i), Load(d, rot[{2}].data() + i)));
+    Store(tr, d, rot[{2}].data() + i);
+    Store(tc, d, rot[{3}].data() + i);
+  }
+}
+
+}  // namespace HWY_NAMESPACE
+}  // namespace tabuli
+HWY_AFTER_NAMESPACE();
+
+#if HWY_ONCE
+
+namespace tabuli {
+
+HWY_EXPORT(HwyIncrementAll);
 
 float GetRotatorGains(int i) {
   static const float kRotatorGains[kNumRotators] = {
@@ -68,10 +104,10 @@ Rotators::Rotators(int num_channels, std::vector<float> frequency,
     max_delay_ = std::max(max_delay_, delay[i]);
     float f = frequency[i] * 2.0f * M_PI / sample_rate;
     gain[i] = filter_gains[i] * global_gain * pow(windowM1, 3.0);
-    rot[0][i] = float(std::cos(f));
-    rot[1][i] = float(-std::sin(f));
-    rot[2][i] = sqrt(gain[i]);
-    rot[3][i] = 0.0f;
+    rot[{0}][i] = float(std::cos(f));
+    rot[{1}][i] = float(-std::sin(f));
+    rot[{2}][i] = sqrt(gain[i]);
+    rot[{3}][i] = 0.0f;
   }
   for (size_t i = 0; i < kNumRotators; ++i) {
     advance[i] = max_delay_ - delay[i];
@@ -80,10 +116,10 @@ Rotators::Rotators(int num_channels, std::vector<float> frequency,
 
 void Rotators::Increment(int c, int i, float audio) {
   if (c == 0) {
-    float tr = rot[0][i] * rot[2][i] - rot[1][i] * rot[3][i];
-    float tc = rot[0][i] * rot[3][i] + rot[1][i] * rot[2][i];
-    rot[2][i] = tr;
-    rot[3][i] = tc;
+    float tr = rot[{0}][i] * rot[{2}][i] - rot[{1}][i] * rot[{3}][i];
+    float tc = rot[{0}][i] * rot[{3}][i] + rot[{1}][i] * rot[{2}][i];
+    rot[{2}][i] = tr;
+    rot[{3}][i] = tc;
   }
   channel[c].accu[0][i] *= window[i];
   channel[c].accu[1][i] *= window[i];
@@ -91,8 +127,8 @@ void Rotators::Increment(int c, int i, float audio) {
   channel[c].accu[3][i] *= window[i];
   channel[c].accu[4][i] *= window[i];
   channel[c].accu[5][i] *= window[i];
-  channel[c].accu[0][i] += rot[2][i] * audio;
-  channel[c].accu[1][i] += rot[3][i] * audio;
+  channel[c].accu[0][i] += rot[{2}][i] * audio;
+  channel[c].accu[1][i] += rot[{3}][i] * audio;
   channel[c].accu[2][i] += channel[c].accu[0][i];
   channel[c].accu[3][i] += channel[c].accu[1][i];
   channel[c].accu[4][i] += channel[c].accu[2][i];
@@ -100,24 +136,26 @@ void Rotators::Increment(int c, int i, float audio) {
 }
 
 void Rotators::AddAudio(int c, int i, float audio) {
-  channel[c].accu[0][i] += rot[2][i] * audio;
-  channel[c].accu[1][i] += rot[3][i] * audio;
+  channel[c].accu[0][i] += rot[{2}][i] * audio;
+  channel[c].accu[1][i] += rot[{3}][i] * audio;
 }
 void Rotators::OccasionallyRenormalize() {
   for (int i = 0; i < kNumRotators; ++i) {
     float norm =
-        sqrt(gain[i] / (rot[2][i] * rot[2][i] + rot[3][i] * rot[3][i]));
-    rot[2][i] *= norm;
-    rot[3][i] *= norm;
+        sqrt(gain[i] / (rot[{2}][i] * rot[{2}][i] + rot[{3}][i] * rot[{3}][i]));
+    rot[{2}][i] *= norm;
+    rot[{3}][i] *= norm;
   }
 }
+
 void Rotators::IncrementAll() {
-  for (int i = 0; i < kNumRotators; i++) {
-    const float tr = rot[0][i] * rot[2][i] - rot[1][i] * rot[3][i];
-    const float tc = rot[0][i] * rot[3][i] + rot[1][i] * rot[2][i];
-    rot[2][i] = tr;
-    rot[3][i] = tc;
-  }
+  HWY_DYNAMIC_DISPATCH(HwyIncrementAll);
+  // for (int i = 0; i < kNumRotators; i++) {
+  //   const float tr = rot[{0}][i] * rot[{2}][i] - rot[{1}][i] * rot[{3}][i];
+  //   const float tc = rot[{0}][i] * rot[{3}][i] + rot[{1}][i] * rot[{2}][i];
+  //   rot[{2}][i] = tr;
+  //   rot[{3}][i] = tc;
+  // }
   for (int c = 0; c < channel.size(); ++c) {
     for (int i = 0; i < kNumRotators; i++) {
       const float w = window[i];
@@ -137,15 +175,15 @@ void Rotators::IncrementAll() {
 float Rotators::GetSampleAll(int c) {
   float retval = 0;
   for (int i = 0; i < kNumRotators; ++i) {
-    retval +=
-        (rot[2][i] * channel[c].accu[4][i] + rot[3][i] * channel[c].accu[5][i]);
+    retval += (rot[{2}][i] * channel[c].accu[4][i] +
+               rot[{3}][i] * channel[c].accu[5][i]);
   }
   return retval;
 }
 float Rotators::GetSample(int c, int i, FilterMode mode) const {
   return (
-      mode == IDENTITY ? (rot[2][i] * channel[c].accu[4][i] +
-                          rot[3][i] * channel[c].accu[5][i])
+      mode == IDENTITY ? (rot[{2}][i] * channel[c].accu[4][i] +
+                          rot[{3}][i] * channel[c].accu[5][i])
       : mode == AMPLITUDE
           ? std::sqrt(gain[i] * (channel[c].accu[4][i] * channel[c].accu[4][i] +
                                  channel[c].accu[5][i] * channel[c].accu[5][i]))
@@ -166,7 +204,7 @@ float HardClip(float v) { return std::max(-1.0f, std::min(1.0f, v)); }
 
 RotatorFilterBank::RotatorFilterBank(size_t num_rotators, size_t num_channels,
                                      size_t samplerate, size_t num_threads,
-                                     const std::vector<float> &filter_gains,
+                                     const std::vector<float>& filter_gains,
                                      float global_gain) {
   num_rotators_ = num_rotators;
   num_channels_ = num_channels;
@@ -183,16 +221,16 @@ RotatorFilterBank::RotatorFilterBank(size_t num_rotators, size_t num_channels,
   QCHECK_LE(max_delay_, kBlockSize);
   fprintf(stderr, "Rotator bank output delay: %zu\n", max_delay_);
   filter_outputs_.resize(num_rotators);
-  for (std::vector<float> &output : filter_outputs_) {
+  for (std::vector<float>& output : filter_outputs_) {
     output.resize(num_channels_ * kBlockSize, 0.f);
   }
 }
 
 // TODO(jyrki): filter all at once in the generic case, filtering one
 // is not memory friendly in this memory tabulation.
-void RotatorFilterBank::FilterOne(size_t f_ix, const float *history,
+void RotatorFilterBank::FilterOne(size_t f_ix, const float* history,
                                   int64_t total_in, int64_t len,
-                                  FilterMode mode, float *output) {
+                                  FilterMode mode, float* output) {
   size_t out_ix = 0;
   for (int64_t i = 0; i < len; ++i) {
     int64_t delayed_ix = total_in + i - rotators_->advance[f_ix];
@@ -211,10 +249,10 @@ void RotatorFilterBank::FilterOne(size_t f_ix, const float *history,
   }
 }
 
-int64_t RotatorFilterBank::FilterAllSingleThreaded(const float *history,
+int64_t RotatorFilterBank::FilterAllSingleThreaded(const float* history,
                                                    int64_t total_in,
                                                    int64_t len, FilterMode mode,
-                                                   float *output,
+                                                   float* output,
                                                    size_t output_size) {
   size_t out_ix = 0;
   for (size_t c = 0; c < num_channels_; ++c) {
@@ -244,9 +282,9 @@ int64_t RotatorFilterBank::FilterAllSingleThreaded(const float *history,
   return out_len;
 }
 
-int64_t RotatorFilterBank::FilterAll(const float *history, int64_t total_in,
+int64_t RotatorFilterBank::FilterAll(const float* history, int64_t total_in,
                                      int64_t len, FilterMode mode,
-                                     float *output, size_t output_size) {
+                                     float* output, size_t output_size) {
   auto run = [&](size_t thread) {
     while (true) {
       size_t my_task = next_task_++;
@@ -279,3 +317,5 @@ int64_t RotatorFilterBank::FilterAll(const float *history, int64_t total_in,
 }
 
 }  // namespace tabuli
+
+#endif  // #ifdef HWY_ONCE
