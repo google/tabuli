@@ -8,10 +8,11 @@ pkg_check_modules(FFTW3 REQUIRED IMPORTED_TARGET fftw3f)
 find_package(Eigen3 REQUIRED)
 set(ABSL_PROPAGATE_CXX_STD YES)
 add_subdirectory(third_party/absl EXCLUDE_FROM_ALL)
-add_subdirectory(third_party/highway EXCLUDE_FROM_ALL)
 
 add_executable(driver_model driver_model/driver_model.cc)
 target_link_libraries(driver_model PkgConfig::SndFile)
+
+set(CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} -mavx2")
 
 foreach (experiment IN ITEMS angular emphasizer revolve spectrum_similarity two_to_three virtual_speakers identity_sliding_fft audio_diff)
   add_executable(${experiment} speaker_experiments/${experiment}.cc)
