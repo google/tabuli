@@ -125,14 +125,18 @@ void Process(
                            std::greater<>()) -
           speaker_to_ratio_table.begin();
 
-      // amp-kludge to make borders louder -- it is a virtual line array where the
-      // borders will be further away in rendering, so let's compensate for it here.
+      // amp-kludge to make borders louder -- it is a virtual line array where
+      // the borders will be further away in rendering, so let's compensate for
+      // it here.
 
-      float distance_from_center = (subspeaker_index - 0.5 * (output_channels - 1));
+      float distance_from_center =
+          (subspeaker_index - 0.5 * (output_channels - 1));
       float assumed_distance_to_line = 0.75 * (output_channels - 1);
-      float distance_to_virtual = sqrt(distance_from_center * distance_from_center +
-                                       assumed_distance_to_line * assumed_distance_to_line);
-      float dist_ratio = distance_to_virtual * (1.0f / assumed_distance_to_line);
+      float distance_to_virtual =
+          sqrt(distance_from_center * distance_from_center +
+               assumed_distance_to_line * assumed_distance_to_line);
+      float dist_ratio =
+          distance_to_virtual * (1.0f / assumed_distance_to_line);
       float amp = dist_ratio * dist_ratio;
 
       const float index =
