@@ -23,13 +23,14 @@ target_link_libraries(fourier_bank
   absl::log_internal_check_impl
 )
 
-foreach (experiment IN ITEMS angular emphasizer revolve spectrum_similarity two_to_three virtual_speakers identity_sliding_fft audio_diff)
+foreach (experiment IN ITEMS angular emphasizer revolve spectral_diff spectrum_similarity two_to_three virtual_speakers identity_sliding_fft audio_diff)
   add_executable(${experiment} speaker_experiments/${experiment}.cc)
   target_link_libraries(${experiment} PkgConfig::SndFile absl::flags absl::flags_parse absl::log absl::log_internal_check_impl fourier_bank)
 endforeach ()
 
 
 target_link_libraries(angular PkgConfig::FFTW3)
+target_link_libraries(spectral_diff PkgConfig::FFTW3)
 target_link_libraries(spectrum_similarity PkgConfig::FFTW3)
 target_link_libraries(two_to_three PkgConfig::FFTW3)
 
