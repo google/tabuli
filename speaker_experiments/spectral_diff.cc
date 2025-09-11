@@ -168,21 +168,21 @@ void Process(const int window_size, const int overlap, const int num_channels,
 }  // namespace
 
 int main(int argc, char **argv) {
-  absl::ParseCommandLine(argc, argv);
+  const std::vector<char*> positional_args = absl::ParseCommandLine(argc, argv);
 
   const int window_size = absl::GetFlag(FLAGS_window_size);
   const int overlap = absl::GetFlag(FLAGS_overlap);
 
   QCHECK_EQ(window_size % overlap, 0);
 
-  QCHECK_EQ(argc, 6)
+  QCHECK_EQ(positional_args.size(), 6)
       << "Usage: " << argv[0]
       << " <input 1> <input 2> <output only 1> <output only 2> <output both>";
 
-  SndfileHandle input_file_1(argv[1]);
+  SndfileHandle input_file_1(positional_args[1]);
   QCHECK(input_file_1) << input_file_1.strError();
 
-  SndfileHandle input_file_2(argv[2]);
+  SndfileHandle input_file_2(positional_args[2]);
   QCHECK(input_file_2) << input_file_2.strError();
 
   QCHECK_EQ(input_file_1.channels(), input_file_2.channels());
@@ -191,13 +191,13 @@ int main(int argc, char **argv) {
   const int samplerate = input_file_1.samplerate();
 
   SndfileHandle output_file_only_1(
-      argv[3], /*mode=*/SFM_WRITE, /*format=*/SF_FORMAT_WAV | SF_FORMAT_PCM_24,
+      positional_args[3], /*mode=*/SFM_WRITE, /*format=*/SF_FORMAT_WAV | SF_FORMAT_PCM_24,
       /*channels=*/num_channels, /*samplerate=*/samplerate);
   SndfileHandle output_file_only_2(
-      argv[4], /*mode=*/SFM_WRITE, /*format=*/SF_FORMAT_WAV | SF_FORMAT_PCM_24,
+      positional_args[4], /*mode=*/SFM_WRITE, /*format=*/SF_FORMAT_WAV | SF_FORMAT_PCM_24,
       /*channels=*/num_channels, /*samplerate=*/samplerate);
   SndfileHandle output_file_both(
-      argv[5], /*mode=*/SFM_WRITE, /*format=*/SF_FORMAT_WAV | SF_FORMAT_PCM_24,
+      positional_args[5], /*mode=*/SFM_WRITE, /*format=*/SF_FORMAT_WAV | SF_FORMAT_PCM_24,
       /*channels=*/num_channels, /*samplerate=*/samplerate);
 
   Process(

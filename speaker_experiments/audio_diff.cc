@@ -240,15 +240,16 @@ void Process(In& input_stream, In& input_stream2, double* error) {
 }  // namespace
 
 int main(int argc, char** argv) {
-  absl::ParseCommandLine(argc, argv);
+  const std::vector<char*> positional_args = absl::ParseCommandLine(argc, argv);
 
-  QCHECK_EQ(argc, 3) << "Usage: " << argv[0] << " <input1> <input2>";
+  QCHECK_EQ(positional_args.size(), 3)
+        << "Usage: " << argv[0] << " <input1> <input2>";
 
-  SndfileHandle input_file1(argv[1]);
+  SndfileHandle input_file1(positional_args[1]);
   QCHECK(input_file1) << input_file1.strError();
 
   QCHECK_EQ(input_file1.channels(), 2);
-  SndfileHandle input_file2(argv[2]);
+  SndfileHandle input_file2(positional_args[2]);
   QCHECK(input_file2) << input_file2.strError();
 
   QCHECK_EQ(input_file2.channels(), 2);

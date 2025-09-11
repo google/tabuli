@@ -529,27 +529,27 @@ void Process(const int output_channels, const double distance_to_interval_ratio,
 }  // namespace
 
 int main(int argc, char **argv) {
-  absl::ParseCommandLine(argc, argv);
+  const std::vector<char*> positional_args = absl::ParseCommandLine(argc, argv);
 
   const int output_channels = absl::GetFlag(FLAGS_output_channels);
   const float distance_to_interval_ratio =
       absl::GetFlag(FLAGS_distance_to_interval_ratio);
 
-  QCHECK_EQ(argc, 4)
+  QCHECK_EQ(positional_args.size(), 4)
       << "Usage: " << argv[0]
       << " <input> <multichannel-output> <binaural-headphone-output>";
 
-  SndfileHandle input_file(argv[1]);
+  SndfileHandle input_file(positional_args[1]);
   QCHECK(input_file) << input_file.strError();
 
   QCHECK_EQ(input_file.channels(), 2);
 
   SndfileHandle output_file(
-      argv[2], /*mode=*/SFM_WRITE, /*format=*/SF_FORMAT_WAV | SF_FORMAT_PCM_24,
+      positional_args[2], /*mode=*/SFM_WRITE, /*format=*/SF_FORMAT_WAV | SF_FORMAT_PCM_24,
       /*channels=*/output_channels, /*samplerate=*/input_file.samplerate());
 
   SndfileHandle binaural_output_file(
-      argv[3], /*mode=*/SFM_WRITE, /*format=*/SF_FORMAT_WAV | SF_FORMAT_PCM_24,
+      positional_args[3], /*mode=*/SFM_WRITE, /*format=*/SF_FORMAT_WAV | SF_FORMAT_PCM_24,
       /*channels=*/2, /*samplerate=*/input_file.samplerate());
 
   Process(output_channels, distance_to_interval_ratio, input_file, output_file,

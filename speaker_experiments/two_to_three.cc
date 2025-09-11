@@ -120,22 +120,23 @@ void Process(const int window_size, const int overlap, In& input_stream,
 }  // namespace
 
 int main(int argc, char** argv) {
-  absl::ParseCommandLine(argc, argv);
+  const std::vector<char*> positional_args = absl::ParseCommandLine(argc, argv);
 
   const int window_size = absl::GetFlag(FLAGS_window_size);
   const int overlap = absl::GetFlag(FLAGS_overlap);
 
   QCHECK_EQ(window_size % overlap, 0);
 
-  QCHECK_EQ(argc, 3) << "Usage: " << argv[0] << " <input> <output>";
+  QCHECK_EQ(positional_args.size(), 3)
+      << "Usage: " << argv[0] << " <input> <output>";
 
-  SndfileHandle input_file(argv[1]);
+  SndfileHandle input_file(positional_args[1]);
   QCHECK(input_file) << input_file.strError();
 
   QCHECK_EQ(input_file.channels(), 2);
 
   SndfileHandle output_file(
-      argv[2], /*mode=*/SFM_WRITE, /*format=*/SF_FORMAT_WAV | SF_FORMAT_PCM_24,
+      positional_args[2], /*mode=*/SFM_WRITE, /*format=*/SF_FORMAT_WAV | SF_FORMAT_PCM_24,
       /*channels=*/3, /*samplerate=*/input_file.samplerate());
 
   Process(

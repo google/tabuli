@@ -219,18 +219,19 @@ float FindScaling(const int window_size, const int overlap,
 }  // namespace
 
 int main(int argc, char** argv) {
-  absl::ParseCommandLine(argc, argv);
+  const std::vector<char*> positional_args = absl::ParseCommandLine(argc, argv);
 
   const int window_size = absl::GetFlag(FLAGS_window_size);
   const int overlap = absl::GetFlag(FLAGS_overlap);
 
   QCHECK_EQ(window_size % overlap, 0);
 
-  QCHECK_EQ(argc, 3) << "Usage: " << argv[0] << " <reference> <candidate>";
+  QCHECK_EQ(positional_args.size(), 3)
+      << "Usage: " << argv[0] << " <reference> <candidate>";
 
-  SndfileHandle reference_input_file(argv[1]);
+  SndfileHandle reference_input_file(positional_args[1]);
   QCHECK(reference_input_file) << reference_input_file.strError();
-  SndfileHandle candidate_input_file(argv[2]);
+  SndfileHandle candidate_input_file(positional_args[2]);
   QCHECK(candidate_input_file) << candidate_input_file.strError();
   QCHECK_EQ(reference_input_file.channels(), 1);
   QCHECK_EQ(candidate_input_file.channels(), 1);
