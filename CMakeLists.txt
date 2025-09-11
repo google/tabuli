@@ -12,7 +12,7 @@ add_subdirectory(third_party/absl EXCLUDE_FROM_ALL)
 add_executable(driver_model driver_model/driver_model.cc)
 target_link_libraries(driver_model PkgConfig::SndFile)
 
-set(CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} -mavx2")
+set(CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} -march=native")
 
 add_library(fourier_bank speaker_experiments/fourier_bank.h speaker_experiments/fourier_bank.cc)
 target_link_libraries(fourier_bank
