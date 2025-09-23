@@ -89,7 +89,7 @@ struct RotatorFilterBank {
                  int64_t len, FilterMode mode, float *output);
 
   int64_t FilterAllSingleThreaded(const float *history, int64_t total_in,
-                                  int64_t len, FilterMode mode, float *output,
+                                  int64_t len, float *output,
                                   size_t output_size);
 
   int64_t FilterAll(const float *history, int64_t total_in, int64_t len,
