@@ -13,19 +13,14 @@
 // limitations under the License.
 
 #include <algorithm>
-#include <atomic>
 #include <cmath>
-#include <complex>
 #include <cstdint>
 #include <cstdlib>
-#include <functional>
-#include <future>  // NOLINT
 #include <memory>
 #include <string>
 #include <vector>
 
 #include "absl/log/check.h"
-#include "absl/strings/str_split.h"
 #include "fourier_bank.h"
 #include "sndfile.hh"
 
@@ -33,18 +28,14 @@ namespace tabuli {
 
 class InputSignal {
  public:
-  InputSignal(const std::string& desc) {
-    std::vector<std::string> params = absl::StrSplit(desc, ":");
-    if (params.size() == 1) {
-      input_file_ = std::make_unique<SndfileHandle>(params[0].c_str());
-      QCHECK(*input_file_) << input_file_->strError();
-      channels_ = input_file_->channels();
-      samplerate_ = input_file_->samplerate();
+  InputSignal(const char *path) {
+    input_file_ = std::make_unique<SndfileHandle>(path);
+    if (!*input_file_) {
+      fprintf(stderr, "cannot open input path: %s\n", path);
+      exit(2);
     }
-  }
-
-  ~InputSignal() {
-    if (signal_f_) fclose(signal_f_);
+    channels_ = input_file_->channels();
+    samplerate_ = input_file_->samplerate();
   }
 
   size_t channels() const { return channels_; }
@@ -52,17 +43,10 @@ class InputSignal {
 
   int64_t readf(float* data, size_t nframes) {
     int64_t read = input_file_->readf(data, nframes);
-    if (signal_f_) {
-      ++input_ix_ += read;
-    }
-    if (signal_f_) fflush(signal_f_);
     return read;
   }
 
  private:
-  std::vector<float> signal_args_;
-  FILE* signal_f_ = nullptr;
-  int64_t input_ix_ = 0;
   size_t channels_;
   size_t samplerate_;
   std::unique_ptr<SndfileHandle> input_file_;
@@ -87,16 +71,13 @@ class OutputSignal {
         channels_, samplerate_);
   }
   
-  const std::vector<float>& output() { return output_; }
   size_t channels() const { return channels_; }
   size_t frame_size() const { return channels_ * freq_channels_; }
-  size_t num_frames() const { return output_.size() / frame_size(); }
 
  private:
   size_t channels_;
   size_t freq_channels_;
   size_t samplerate_;
-  std::vector<float> output_;
   std::unique_ptr<SndfileHandle> output_file_;
 };
 
@@ -147,7 +128,10 @@ void Process(
 using namespace tabuli;
 
 int main(int argc, char** argv) {
-  QCHECK_GE(argc, 3) << "Usage: " << argv[0] << " <input> <output>";
+  if(argc < 3) {
+    fprintf(stderr, "Usage: %s in.wav out.wav\n", argv[0]);
+    exit(1);
+  }
   InputSignal input(argv[1]);
   size_t freq_channels = 1;
   OutputSignal output(input.channels(), freq_channels, input.samplerate());
