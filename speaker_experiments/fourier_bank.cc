@@ -103,6 +103,7 @@ void Rotators::AddAudio(int c, int i, float audio) {
   channel[c].accu[0][i] += rot[2][i] * audio;
   channel[c].accu[1][i] += rot[3][i] * audio;
 }
+  
 void Rotators::OccasionallyRenormalize() {
   for (int i = 0; i < kNumRotators; ++i) {
     float norm =
@@ -111,6 +112,7 @@ void Rotators::OccasionallyRenormalize() {
     rot[3][i] *= norm;
   }
 }
+  
 void Rotators::IncrementAll() {
   for (int i = 0; i < kNumRotators; i++) {
     const float tr = rot[0][i] * rot[2][i] - rot[1][i] * rot[3][i];
@@ -134,6 +136,7 @@ void Rotators::IncrementAll() {
     }
   }
 }
+  
 float Rotators::GetSampleAll(int c) {
   float retval = 0;
   for (int i = 0; i < kNumRotators; ++i) {
@@ -142,6 +145,7 @@ float Rotators::GetSampleAll(int c) {
   }
   return retval;
 }
+  
 float Rotators::GetSample(int c, int i, FilterMode mode) const {
   return (
       mode == IDENTITY ? (rot[2][i] * channel[c].accu[4][i] +
@@ -213,7 +217,7 @@ void RotatorFilterBank::FilterOne(size_t f_ix, const float *history,
 
 int64_t RotatorFilterBank::FilterAllSingleThreaded(const float *history,
                                                    int64_t total_in,
-                                                   int64_t len, FilterMode mode,
+                                                   int64_t len,
                                                    float *output,
                                                    size_t output_size) {
   size_t out_ix = 0;
