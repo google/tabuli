@@ -21,10 +21,229 @@
 #include <vector>
 
 #include "absl/log/check.h"
-#include "fourier_bank.h"
 #include "sndfile.hh"
 
+#include <algorithm>
+#define _USE_MATH_DEFINES
+#include <math.h>
+#include <cstdlib>
+#include <cstdint>
+#include <cstring>
+#include <memory>
+#include <iostream>
+#include <limits>
+#include <string>
+#include <utility>
+#include <vector>
+
+static const int kHistorySize = (1 << 18);
+static const int kHistoryMask = kHistorySize - 1;
+static constexpr int64_t kBlockSize = 1 << 15;
+
 namespace tabuli {
+
+int FindMedian3xLeaker(float window) {
+  // Approximate filter delay. TODO: optimize this value along with gain values.
+  // Recordings can sound better with -2.32 as it pushes the bass signals a bit
+  // earlier and likely compensates human hearing's deficiency for temporal
+  // separation.
+  const float kMagic = -2.2028003503591482;
+  const float kAlmostHalfForRounding = 0.4687;
+  return static_cast<int>(kMagic / log(window) + kAlmostHalfForRounding);
+}
+
+// Expected signal sample rate.
+constexpr float kSampleRate = 48000;
+constexpr int64_t kNumRotators = 128;
+
+// Computes dot product of two 32-element float arrays.
+// Optimized for SIMD vectorization with -ffast-math.
+inline float Dot32(const float* a, const float* b) {
+  // -ffast-math is helpful here, and clang can simdify this.
+  float sum = 0;
+  for (int i = 0; i < 32; ++i) sum += a[i] * b[i];
+  return sum;
+}
+
+// Returns the center frequency in Hz for filter bank channel i.
+// The 128 channels are spaced to match human auditory perception,
+// with finer resolution at lower frequencies.
+float Freq(int i) {
+  // Center frequencies of the filter bank, plus one frequency in both ends.
+  static const float kFreq[130] = {
+      17.858,  24.349,  33.199,  42.359,  51.839,  61.651,  71.805,  82.315,
+      93.192,  104.449, 116.099, 128.157, 140.636, 153.552, 166.919, 180.754,
+      195.072, 209.890, 225.227, 241.099, 257.527, 274.528, 292.124, 310.336,
+      329.183, 348.690, 368.879, 389.773, 411.398, 433.778, 456.941, 480.914,
+      505.725, 531.403, 557.979, 585.484, 613.950, 643.411, 673.902, 705.459,
+      738.119, 771.921, 806.905, 843.111, 880.584, 919.366, 959.503, 1001.04,
+      1044.03, 1088.53, 1134.58, 1182.24, 1231.57, 1282.62, 1335.46, 1390.14,
+      1446.73, 1505.31, 1565.93, 1628.67, 1693.60, 1760.80, 1830.35, 1902.34,
+      1976.84, 2053.94, 2133.74, 2216.33, 2301.81, 2390.27, 2481.83, 2576.58,
+      2674.65, 2776.15, 2881.19, 2989.91, 3102.43, 3218.88, 3339.40, 3464.14,
+      3593.23, 3726.84, 3865.12, 4008.23, 4156.35, 4309.64, 4468.30, 4632.49,
+      4802.43, 4978.31, 5160.34, 5348.72, 5543.70, 5745.49, 5954.34, 6170.48,
+      6394.18, 6625.70, 6865.32, 7113.31, 7369.97, 7635.61, 7910.53, 8195.06,
+      8489.53, 8794.30, 9109.73, 9436.18, 9774.04, 10123.7, 10485.6, 10860.1,
+      11247.8, 11648.9, 12064.2, 12493.9, 12938.7, 13399.0, 13875.3, 14368.4,
+      14878.7, 15406.8, 15953.4, 16519.1, 17104.5, 17710.4, 18337.6, 18986.6,
+      19658.3, 20352.7,
+  };
+  return kFreq[i + 1];
+}
+
+// Calculates the effective bandwidth in Hz for filter bank channel i.
+// Uses geometric mean spacing between adjacent channels.
+double CalculateBandwidthInHz(int i) {
+  return std::sqrt(Freq(i + 1) * Freq(i)) - std::sqrt(Freq(i - 1) * Freq(i));
+}
+
+struct PerChannel {
+  // [0..1] is for real and imag of 1st leaking accumulation
+  // [2..3] is for real and imag of 2nd leaking accumulation
+  // [4..5] is for real and imag of 3rd leaking accumulation
+  float accu[6][kNumRotators] = {0};
+};
+
+// Core signal processing engine using rotating phasors (Goertzel-like
+// algorithm) for efficient frequency analysis. Implements the Zimtohrli/Tabuli
+// filterbank.
+class Rotators {
+ private:
+  // Four arrays of rotators, with memory layout for up to 128-way
+  // simd-parallel. [0..1] is real and imag for rotation speed [2..3] is real
+  // and image for a frequency rotator of length sqrt(gain[i])
+  float rot[4][kNumRotators];
+  // [0..1] is for real and imag of 1st leaking accumulation
+  // [2..3] is for real and imag of 2nd leaking accumulation
+  // [4..5] is for real and imag of 3rd leaking accumulation
+  std::vector<PerChannel> channel;
+  float window[kNumRotators];
+  float gain[kNumRotators];
+  int16_t delay[kNumRotators] = {0};
+  int16_t advance[kNumRotators] = {0};
+  int16_t max_delay_ = 0;
+  int num_channels;
+
+  // Renormalizes the rotating phasors to prevent numerical drift.
+  // Called periodically during signal processing.
+  void OccasionallyRenormalize() {
+    for (int i = 0; i < kNumRotators; ++i) {
+      float norm =
+          gain[i] / sqrt(rot[2][i] * rot[2][i] + rot[3][i] * rot[3][i]);
+      rot[2][i] *= norm;
+      rot[3][i] *= norm;
+    }
+  }
+  void AddAudio(int c, int i, float audio) {
+    channel[c].accu[0][i] += rot[2][i] * audio;
+    channel[c].accu[1][i] += rot[3][i] * audio;
+  }
+  // Updates all rotators and accumulators with a new signal sample.
+  // Applies windowing, rotates phasors, and accumulates energy.
+  void IncrementAll() {
+    for (int c = 0; c < channel.size(); ++c) {
+      for (int i = 0; i < kNumRotators; i++) {  // clang simdifies this.
+	const float w = window[i];
+	for (int k = 0; k < 6; ++k) channel[c].accu[k][i] *= w;
+	channel[c].accu[2][i] += channel[c].accu[0][i];
+	channel[c].accu[3][i] += channel[c].accu[1][i];
+	channel[c].accu[4][i] += channel[c].accu[2][i];
+	channel[c].accu[5][i] += channel[c].accu[3][i];
+	const float a = rot[2][i], b = rot[3][i];
+	rot[2][i] = rot[0][i] * a - rot[1][i] * b;
+	rot[3][i] = rot[0][i] * b + rot[1][i] * a;
+      }
+    }
+  }
+
+ public:
+  // Main signal processing function that converts time-domain audio to a
+  // perceptual spectrogram. Applies resonator filtering, frequency analysis
+  // via rotating phasors, and downsampling.
+  // in: input audio samples
+  // in_size: number of input samples
+  // out: output spectrogram buffer
+  // out_shape0: number of time steps in output
+  // out_stride: stride between time steps in output buffer
+  // downsample: downsampling factor
+  void Init(int channels) {
+    channel.resize(channels);
+    num_channels = channels;
+    static int downsample = 480;
+    static const float kSampleRate = 48000.0;
+    static const float kHzToRad = 2.0f * M_PI / kSampleRate;
+    static const double kWindow = 0.9996073584827937;
+    static const double kBandwidthMagic = 0.73227703638356523;
+    // A big value for normalization. Ideally 1.0, but this works better
+    // for an unknown reason even if the base noise level is adapted similarly. 
+    static const double kScale = 1.3e4; // 0.009319124047834452;
+    const float gainer = sqrt(kScale / downsample);
+    for (int i = 0; i < kNumRotators; ++i) {
+      float bandwidth = CalculateBandwidthInHz(i);  // bandwidth per bucket.
+      window[i] = std::pow(kWindow, bandwidth * kBandwidthMagic);
+      delay[i] = FindMedian3xLeaker(window[i]);
+      max_delay_ = std::max(max_delay_, delay[i]);
+      float windowM1 = 1.0f - window[i];
+      const float f = Freq(i) * kHzToRad;
+      gain[i] = gainer * sqrt(windowM1 * windowM1 * windowM1 * bandwidth / Freq(i));
+      rot[0][i] = float(std::cos(f));
+      rot[1][i] = float(-std::sin(f));
+      rot[2][i] = gain[i];
+      rot[3][i] = 0.0f;
+    }
+    for (size_t i = 0; i < kNumRotators; ++i) {
+      advance[i] = max_delay_ - delay[i];
+    }
+    std::vector<float> downsample_window(downsample);
+    for (int i = 0; i < downsample; ++i) {
+      downsample_window[i] =
+          1.0 / (1.0 + exp(8.0246040186567118 * ((2.0 / downsample) * (i + 0.5) - 1)));
+    }
+  }
+  float HardClip(float v) { return std::max(-1.0f, std::min(1.0f, v)); }
+  float GetSampleAll(int c) {
+    float retval = 0;
+    for (int i = 0; i < kNumRotators; ++i) {
+      retval += 
+	  (rot[2][i] * channel[c].accu[4][i] + rot[3][i] * channel[c].accu[5][i]);
+    }
+    return retval;
+  }
+
+  int64_t FilterAllSingleThreaded(const float *history,
+				  int64_t total_in,
+				  int64_t len,
+				  float *output,
+				  size_t output_size) {
+    size_t out_ix = 0;
+    OccasionallyRenormalize();
+    for (int64_t i = 0; i < len; ++i) {
+      for (size_t c = 0; c < channel.size(); ++c) {
+	for (int k = 0; k < kNumRotators; ++k) {
+	  int64_t delayed_ix = total_in + i - advance[k];
+	  size_t histo_ix = num_channels * (delayed_ix & kHistoryMask);
+	  float delayed = history[histo_ix + c];
+	  AddAudio(c, k, delayed);
+	}
+      }
+      IncrementAll();
+      if (total_in + i >= max_delay_) {
+	for (size_t c = 0; c < num_channels; ++c) {
+	  output[out_ix * num_channels + c] =
+	      HardClip(GetSampleAll(c));
+	}
+	++out_ix;
+      }
+    }
+    size_t out_len = total_in < max_delay_
+      ? std::max<int64_t>(0, len - (max_delay_ - total_in))
+      : len;
+    return out_len;
+  }
+};
+
+
 
 class InputSignal {
  public:
@@ -92,9 +311,8 @@ void Process(
   std::vector<float> input(num_channels * kBlockSize);
   std::vector<float> output(output_stream.frame_size() * kBlockSize);
   
-  RotatorFilterBank rotbank(kNumRotators, num_channels,
-                            input_stream.samplerate(), /*num_threads=*/1,
-                            filter_gains, 1.0);
+  Rotators rotbank;
+  rotbank.Init(num_channels);
   
   start_progress();
   int64_t total_in = 0;
@@ -133,12 +351,11 @@ int main(int argc, char** argv) {
     exit(1);
   }
   InputSignal input(argv[1]);
-  size_t freq_channels = 1;
-  OutputSignal output(input.channels(), freq_channels, input.samplerate());
+  OutputSignal output(input.channels(), kNumRotators, input.samplerate());
   output.SetWavFile(argv[2]);
   std::vector<float> filter_gains;
-  for (int i = 0; i < kNumRotators; ++i) {
-    filter_gains.push_back(GetRotatorGains(i));
-  }
+  //  for (int i = 0; i < kNumRotators; ++i) {
+  //    filter_gains.push_back(GetRotatorGains(i));
+  //  }
   Process(input, output, filter_gains);
 }

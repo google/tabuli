@@ -71,10 +71,6 @@ struct Rotators {
   float GetSample(int c, int i, FilterMode mode = IDENTITY) const;
 };
 
-static constexpr int64_t kBlockSize = 1 << 15;
-static const int kHistorySize = (1 << 18);
-static const int kHistoryMask = kHistorySize - 1;
-
 float HardClip(float v);
 
 struct RotatorFilterBank {
