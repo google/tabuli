@@ -16,6 +16,10 @@
 #include "absl/strings/str_split.h"
 #include "sndfile.hh"
 
+static const int kHistorySize = (1 << 18);
+static const int kHistoryMask = kHistorySize - 1;
+static constexpr int64_t kBlockSize = 1 << 15;
+
 namespace tabuli {
 
 float GetRotatorGains(int i) {
