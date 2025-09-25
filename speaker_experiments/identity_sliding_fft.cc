@@ -47,7 +47,7 @@ int FindMedian3xLeaker(float window) {
   // Recordings can sound better with -2.32 as it pushes the bass signals a bit
   // earlier and likely compensates human hearing's deficiency for temporal
   // separation.
-  const float kMagic = -2.2028003503591482;
+  const float kMagic = -12.5;
   const float kAlmostHalfForRounding = 0.4687;
   return static_cast<int>(kMagic / log(window) + kAlmostHalfForRounding);
 }
@@ -92,17 +92,22 @@ float Freq(int i) {
   return kFreq[i + 1];
 }
 
+float FreqAve(int i) {
+  return sqrt(Freq(i - 1) * Freq(i + 1));
+}
+
 // Calculates the effective bandwidth in Hz for filter bank channel i.
 // Uses geometric mean spacing between adjacent channels.
 double CalculateBandwidthInHz(int i) {
-  return std::sqrt(Freq(i + 1) * Freq(i)) - std::sqrt(Freq(i - 1) * Freq(i));
+  return 0.5 * (Freq(i + 1) - std::sqrt(Freq(i - 1)));
+  //  return std::sqrt(Freq(i + 1) * Freq(i)) - std::sqrt(Freq(i - 1) * Freq(i));
 }
 
 struct PerChannel {
   // [0..1] is for real and imag of 1st leaking accumulation
   // [2..3] is for real and imag of 2nd leaking accumulation
   // [4..5] is for real and imag of 3rd leaking accumulation
-  float accu[6][kNumRotators] = {0};
+  float accu[20][kNumRotators] = {0};
 };
 
 // Core signal processing engine using rotating phasors (Goertzel-like
@@ -145,11 +150,10 @@ class Rotators {
     for (int c = 0; c < channel.size(); ++c) {
       for (int i = 0; i < kNumRotators; i++) {  // clang simdifies this.
 	const float w = window[i];
-	for (int k = 0; k < 6; ++k) channel[c].accu[k][i] *= w;
-	channel[c].accu[2][i] += channel[c].accu[0][i];
-	channel[c].accu[3][i] += channel[c].accu[1][i];
-	channel[c].accu[4][i] += channel[c].accu[2][i];
-	channel[c].accu[5][i] += channel[c].accu[3][i];
+	for (int k = 0; k < 20; ++k) channel[c].accu[k][i] *= w;
+	for (int k = 2; k < 20; ++k) {
+	  channel[c].accu[k][i] += channel[c].accu[k - 2][i];
+	}
 	const float a = rot[2][i], b = rot[3][i];
 	rot[2][i] = rot[0][i] * a - rot[1][i] * b;
 	rot[3][i] = rot[0][i] * b + rot[1][i] * a;
@@ -174,19 +178,17 @@ class Rotators {
     static const float kSampleRate = 48000.0;
     static const float kHzToRad = 2.0f * M_PI / kSampleRate;
     static const double kWindow = 0.9996073584827937;
-    static const double kBandwidthMagic = 0.73227703638356523;
-    // A big value for normalization. Ideally 1.0, but this works better
-    // for an unknown reason even if the base noise level is adapted similarly. 
-    static const double kScale = 1.3e4; // 0.009319124047834452;
+    // A big value for normalization.
+    static const double kScale = 2e2;
     const float gainer = sqrt(kScale / downsample);
     for (int i = 0; i < kNumRotators; ++i) {
       float bandwidth = CalculateBandwidthInHz(i);  // bandwidth per bucket.
-      window[i] = std::pow(kWindow, bandwidth * kBandwidthMagic);
+      window[i] = std::pow(kWindow, bandwidth * 0.82);
       delay[i] = FindMedian3xLeaker(window[i]);
       max_delay_ = std::max(max_delay_, delay[i]);
       float windowM1 = 1.0f - window[i];
-      const float f = Freq(i) * kHzToRad;
-      gain[i] = gainer * sqrt(windowM1 * windowM1 * windowM1 * bandwidth / Freq(i));
+      const float f = FreqAve(i) * kHzToRad;
+      gain[i] = gainer * pow(windowM1, 5.0);
       rot[0][i] = float(std::cos(f));
       rot[1][i] = float(-std::sin(f));
       rot[2][i] = gain[i];
@@ -204,9 +206,10 @@ class Rotators {
   float HardClip(float v) { return std::max(-1.0f, std::min(1.0f, v)); }
   float GetSampleAll(int c) {
     float retval = 0;
-    for (int i = 0; i < kNumRotators; ++i) {
-      retval += 
-	  (rot[2][i] * channel[c].accu[4][i] + rot[3][i] * channel[c].accu[5][i]);
+    for (int i = 0; i < 128; ++i) {
+      float a0 = channel[c].accu[18][i];
+      float a1 = channel[c].accu[19][i];
+      retval += (rot[2][i] * a0 + rot[3][i] * a1);
     }
     return retval;
   }
