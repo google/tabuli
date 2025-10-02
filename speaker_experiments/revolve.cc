@@ -40,8 +40,8 @@ float MicrophoneResponse(const float angle) {
 }
 
 float ExpectedLeftToRightRatio(const float angle) {
-  return (1e-3 + MicrophoneResponse(angle + M_PI / 4)) /
-         (1e-3 + MicrophoneResponse(angle - M_PI / 4));
+  return (1e-14 + MicrophoneResponse(angle + M_PI / 4)) /
+         (1e-14 + MicrophoneResponse(angle - M_PI / 4));
 }
 
 float ActualLeftToRightRatio(float left, float right) {
@@ -64,7 +64,7 @@ float FreqAve(int i) {
 }
 
 double CalculateBandwidthInHz(int i) {
-  return 0.5 * (Freq(i + 1) - Freq(i - 1));
+  return sqrt ((Freq(i + 1) - Freq(i)) * (Freq(i) - Freq(i - 1)));
 }
 
 struct PerChannel {
@@ -127,7 +127,6 @@ struct Rotators {
     }
   }
   void AddAudio(int c, int i, float audio) {
-    //    audio *= 0.03;
     channel[c].accu[0][i] += rot[2][i] * audio;
     channel[c].accu[1][i] += rot[3][i] * audio;
   }
