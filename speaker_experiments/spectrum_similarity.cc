@@ -233,8 +233,8 @@ int main(int argc, char** argv) {
   QCHECK(reference_input_file) << reference_input_file.strError();
   SndfileHandle candidate_input_file(positional_args[2]);
   QCHECK(candidate_input_file) << candidate_input_file.strError();
-  QCHECK_EQ(reference_input_file.channels(), 1);
-  QCHECK_EQ(candidate_input_file.channels(), 1);
+  QCHECK_EQ(reference_input_file.channels(),
+	    candidate_input_file.channels());
   QCHECK_EQ(reference_input_file.samplerate(),
             candidate_input_file.samplerate());
 
