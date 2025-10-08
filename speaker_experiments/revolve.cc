@@ -37,20 +37,42 @@ namespace {
 
 constexpr int kSubSourcePrecision = 4000;
 
-float MicrophoneResponse(const float angle) {
-  return 0.5f * (1.0f + std::cos(angle));
+float SquaredMicrophoneResponse(const float angle) {
+  float ret = 0.5f * (1.0f + std::cos(angle));
+  return ret * ret;
 }
 
 float ExpectedLeftToRightRatio(const float angle) {
-  return (1e-20 + MicrophoneResponse(angle + M_PI / 4)) /
-         (1e-20 + MicrophoneResponse(angle - M_PI / 4));
+  return (1e-14 + SquaredMicrophoneResponse(angle + M_PI / 4)) /
+         (1e-14 + SquaredMicrophoneResponse(angle - M_PI / 4));
 }
 
 float ActualLeftToRightRatio(float left, float right) {
-  return std::sqrt((1e-20 + left) / (1e-20 + right));
+  return (1e-14 + left) / (1e-14 + right);
 }
 
 constexpr int64_t kNumRotators = 128;
+
+float AngleEffect(float dy, float distance, int rot) {
+  float dist2 = dy * dy + distance * distance;
+  float cos_angle = distance * distance / dist2; // 2nd
+  if (rot >= 35) {
+    cos_angle *= cos_angle;  // 4th
+  }
+  if (rot >= 45) {
+    cos_angle *= cos_angle;  // 8th
+  }
+  if (rot >= 65) {
+    cos_angle *= cos_angle;  // 16th
+  }
+  if (rot >= 85) {
+    cos_angle *= cos_angle;  // 32nd
+  }
+  if (rot >= 105) {
+    cos_angle *= cos_angle;  // 64th
+  }
+  return cos_angle;
+}
 
 float Freq(int i) {
   // Center frequencies of the filter bank, plus one frequency in both ends.
@@ -195,13 +217,6 @@ struct RotatorFilterBank {
   int64_t max_delay_;
 };
 
-float AngleEffect(float dy, float distance) {
-  float dist2 = sqrt(dy * dy + distance * distance);
-  float cos_angle = distance / dist2;
-  cos_angle = cos_angle * cos_angle * cos_angle * cos_angle * cos_angle;
-  return cos_angle * cos_angle * cos_angle * cos_angle;
-}
-
 float HardClip(float v) { return std::max(-1.0f, std::min(1.0f, v)); }
 
 struct MultiChannelDriverModel {
@@ -295,7 +310,6 @@ void Process(const int output_channels_arg, const double distance_to_interval_ra
              Out &binaural_output_stream) {
   std::vector<float> history(input_stream.channels() * kHistorySize);
   std::vector<float> input(input_stream.channels() * kBlockSize);
-  float left_right_mul = two_reverb_channels ? 1.0 : 1.0;
 
   int output_channels = two_reverb_channels ? output_channels_arg + 2 : output_channels_arg;
   std::vector<float> output(output_channels * kBlockSize);
@@ -369,7 +383,7 @@ void Process(const int output_channels_arg, const double distance_to_interval_ra
         }
       }
       rfb.rotators_->IncrementAll();
-      for (int rot = 0; rot < kNumRotators; ++rot) {
+      for (int rot = kNumRotators - 1; rot >= 0; --rot) {
         const float ratio =
             ActualLeftToRightRatio(rfb.rotators_->channel[1].LenSqr(rot),
                                    rfb.rotators_->channel[0].LenSqr(rot));
@@ -399,7 +413,8 @@ void Process(const int output_channels_arg, const double distance_to_interval_ra
                                   rfb.rotators_->channel[1].accu[14][rot],
                                   rfb.rotators_->channel[1].accu[15][rot],
                                   rfb.rotators_->channel[0].accu[14][rot],
-                                  rfb.rotators_->channel[0].accu[15][rot], right,
+                                  rfb.rotators_->channel[0].accu[15][rot],
+				  right,
                                   center, left);
         if (total_in + i >= rfb.max_delay_) {
 #define BINAURAL
@@ -470,39 +485,53 @@ void Process(const int output_channels_arg, const double distance_to_interval_ra
           }
 #endif
 	  
-	  //	  float ilmul = (rot < 70 && rot > 8) ? 2 : 1;
           // for (int kk = rot & 1; kk < output_channels_arg; kk += 1 + (rot < 70 && rot > 8)) {  // distribute alternating frequencies to every 2nd speaker
           //for (int kk = rot & 3; kk < output_channels_arg; kk += 4) {  // the same in groups of 4
 	  
-	  if (rot < 22) {
+	  int speaker = static_cast<int>(floor(subspeaker_index));
+	  float off = subspeaker_index - speaker;
+
+	  if (rot < 25) {
+	    /*
+	    output[out_ix * output_channels + 0] += 0.5 * right;
+	    output[out_ix * output_channels + 1] += 0.5 * right;
+	    output[out_ix * output_channels + output_channels_arg - 2] += 0.5 * left;
+	    output[out_ix * output_channels + output_channels_arg - 1] += 0.5 * left;
+	    */
 	    // Bass all with the same signal.
 	    float v = center * (1.0f / output_channels_arg);
 	    for (int kk = 0; kk < output_channels_arg; kk++) {
 	      output[out_ix * output_channels + kk] += v;
 	    }
 	  } else {
+	    std::vector<float> w(output_channels_arg);
+	    float sum = 1e-10;
 	    for (int kk = 0; kk < output_channels_arg; kk++) {
-	      float ilmul = 1.0;
 	      float speaker_offset = (kk - midpoint) * 0.1;
-	      float val = AngleEffect(speaker_offset + distance_from_center,
-				      assumed_distance_to_line) *
-		center;
-	      output[out_ix * output_channels + kk] += val * ilmul;
-	      
-	      output[out_ix * output_channels + kk] +=
-                AngleEffect(speaker_offset - speaker_offset_right,
-                            assumed_distance_to_line) *
-  	        right * left_right_mul * ilmul;
-	      output[out_ix * output_channels + kk] +=
-	        AngleEffect(speaker_offset - speaker_offset_left,
-			    assumed_distance_to_line) *
-	        left * left_right_mul * ilmul;
+	      w[kk] = AngleEffect(speaker_offset + distance_from_center,
+				  assumed_distance_to_line, rot);
+	      sum += w[kk];
+	    }
+	    float scale = 1.0f / sum;
+	    for (int kk = 0; kk < output_channels_arg; kk++) {
+	      output[out_ix * output_channels + kk] += w[kk] * center * scale;
 	    }
 	  }
+	  output[out_ix * output_channels + 0] += 0.25 * left;
+	  output[out_ix * output_channels + 1] += 0.30 * left;
+	  output[out_ix * output_channels + 2] += 0.25 * left;
+	  output[out_ix * output_channels + 3] += 0.20 * left;
+	  output[out_ix * output_channels + output_channels_arg - 4] += 0.20 * right;
+	  output[out_ix * output_channels + output_channels_arg - 3] += 0.25 * right;
+	  output[out_ix * output_channels + output_channels_arg - 2] += 0.30 * right;
+	  output[out_ix * output_channels + output_channels_arg - 1] += 0.25 * right;
+
+	  float one_per_output_channels_arg = 1.0f / output_channels_arg;
 	  if (two_reverb_channels) {
 	    // two last channels reserved for reverb signal
-            output[(out_ix + 1) * output_channels - 2 ] += left;
-	    output[(out_ix + 1) * output_channels - 1 ] += right;
+	    // add hock normalization
+	    output[(out_ix + 1) * output_channels - 2 ] += left * one_per_output_channels_arg;
+	    output[(out_ix + 1) * output_channels - 1 ] += right * one_per_output_channels_arg;
 	  }
         }
       }
