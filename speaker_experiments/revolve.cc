@@ -26,26 +26,28 @@
 #include "absl/flags/parse.h"
 #include "absl/log/check.h"
 
-ABSL_FLAG(int, output_channels, 16, "number of output channels");
-ABSL_FLAG(double, distance_to_interval_ratio, 8,
+ABSL_FLAG(int, output_channels, 12, "number of output channels");
+
+// optimize this?!
+ABSL_FLAG(double, distance_to_interval_ratio, 4,
           "ratio of (distance between microphone and source array) / (distance "
           "between each source); default = 40cm / 10cm = 4");
 
 namespace {
 
-constexpr int kSubSourcePrecision = 1000;
+constexpr int kSubSourcePrecision = 4000;
 
 float MicrophoneResponse(const float angle) {
   return 0.5f * (1.0f + std::cos(angle));
 }
 
 float ExpectedLeftToRightRatio(const float angle) {
-  return (1e-14 + MicrophoneResponse(angle + M_PI / 4)) /
-         (1e-14 + MicrophoneResponse(angle - M_PI / 4));
+  return (1e-20 + MicrophoneResponse(angle + M_PI / 4)) /
+         (1e-20 + MicrophoneResponse(angle - M_PI / 4));
 }
 
 float ActualLeftToRightRatio(float left, float right) {
-  return std::sqrt((1e-13 + left) / (1e-13 + right));
+  return std::sqrt((1e-20 + left) / (1e-20 + right));
 }
 
 constexpr int64_t kNumRotators = 128;
@@ -155,15 +157,21 @@ struct Rotators {
   void GetTriplet(float left_to_right_ratio, int rot_ix, float rightr,
                   float righti, float leftr, float lefti, float &right,
                   float &center, float &left) {
-    float aver = rightr + leftr;
-    float avei = righti + lefti;
+    float rlen = sqrt(rightr * rightr + righti * righti) + 1e-20;
+    float llen = sqrt(leftr * leftr + lefti * lefti) + 1e-20;
+    float invsumlen = 1.0 / (rlen + llen);
+    rlen *= invsumlen;
+    llen *= invsumlen;
+
+    float aver = (rlen * rightr + llen * leftr);
+    float avei = (rlen * righti + llen * lefti);
 
     center = rot[2][rot_ix] * aver + rot[3][rot_ix] * avei;
 
-    rightr -= left_to_right_ratio * aver;
-    righti -= left_to_right_ratio * avei;
-    leftr -= (1.0 - left_to_right_ratio) * aver;
-    lefti -= (1.0 - left_to_right_ratio) * avei;
+    rightr -= rlen * aver;
+    righti -= rlen * avei;
+    leftr -= llen * aver;
+    lefti -= llen * avei;
 
     right = rot[2][rot_ix] * rightr + rot[3][rot_ix] * righti;
     left = rot[2][rot_ix] * leftr + rot[3][rot_ix] * lefti;
@@ -190,8 +198,8 @@ struct RotatorFilterBank {
 float AngleEffect(float dy, float distance) {
   float dist2 = sqrt(dy * dy + distance * distance);
   float cos_angle = distance / dist2;
-  cos_angle = cos_angle * cos_angle * cos_angle;
-  return cos_angle;
+  cos_angle = cos_angle * cos_angle * cos_angle * cos_angle * cos_angle;
+  return cos_angle * cos_angle * cos_angle * cos_angle;
 }
 
 float HardClip(float v) { return std::max(-1.0f, std::min(1.0f, v)); }
@@ -213,7 +221,7 @@ struct MultiChannelDriverModel {
     const float kResonance = 100.0;
     // Funny constant -- perhaps from 1.0 / (2 * pi * samplerate),
     // didn't analyze yet why this works, but it does.
-    const float kFunnyConstant = 0.0000039;
+    const float kFunnyConstant = 0.0000035;
     const float kSuspension = kFunnyConstant * kResonance;
 
     // damping reduces the speed of the membrane passively as it
@@ -221,7 +229,7 @@ struct MultiChannelDriverModel {
     const float damping = 0.99999;
     const float kSomewhatRandomNonPhysicalPositionRegularization = 0.99998;
 
-    const float kInputMul = 0.3;
+    const float kInputMul = 0.1;
 
     for (int k = 0; k < n; ++k) {
       float kAve = 0.9995;
@@ -281,13 +289,20 @@ float *GetBinauralTable() {
 }
 
 template <typename In, typename Out>
-void Process(const int output_channels, const double distance_to_interval_ratio,
+void Process(const int output_channels_arg, const double distance_to_interval_ratio,
+	     bool two_reverb_channels,
              In &input_stream, Out &output_stream,
              Out &binaural_output_stream) {
   std::vector<float> history(input_stream.channels() * kHistorySize);
   std::vector<float> input(input_stream.channels() * kBlockSize);
+  float left_right_mul = two_reverb_channels ? 1.0 : 1.0;
+
+  int output_channels = two_reverb_channels ? output_channels_arg + 2 : output_channels_arg;
   std::vector<float> output(output_channels * kBlockSize);
   std::vector<float> binaural_output(2 * kBlockSize);
+  float midpoint = 0.5 * (output_channels - 1);
+  float speaker_offset_left = (2 - midpoint) * 0.1;
+  float speaker_offset_right = (9 - midpoint) * 0.1;
 
   MultiChannelDriverModel dm;
   dm.Initialize(output_channels);
@@ -307,11 +322,11 @@ void Process(const int output_channels, const double distance_to_interval_ratio,
                         input_stream.samplerate());
 
   std::vector<float> speaker_to_ratio_table;
-  speaker_to_ratio_table.reserve(kSubSourcePrecision * (output_channels - 1) +
+  speaker_to_ratio_table.reserve(kSubSourcePrecision * (output_channels_arg - 1) +
                                  1);
-  for (int i = 0; i < kSubSourcePrecision * (output_channels - 1) + 1; ++i) {
+  for (int i = 0; i < kSubSourcePrecision * (output_channels_arg - 1) + 1; ++i) {
     const float x_div_interval = static_cast<float>(i) / kSubSourcePrecision -
-                                 0.5f * (output_channels - 1);
+                                 0.5f * (output_channels_arg - 1);
     const float x_div_distance = x_div_interval / distance_to_interval_ratio;
     const float angle = std::atan(x_div_distance);
     speaker_to_ratio_table.push_back(ExpectedLeftToRightRatio(angle));
@@ -364,19 +379,23 @@ void Process(const int output_channels, const double distance_to_interval_ratio,
                               std::greater<>()) -
              speaker_to_ratio_table.begin()) *
             (1.0 / kSubSourcePrecision);
+	/*
         if (subspeaker_index < 1.0) {
           subspeaker_index = 1.0;
         }
-        if (subspeaker_index >= 14.0) {
-          subspeaker_index = 14.0;
+        if (subspeaker_index >= 11.0) {
+          subspeaker_index = 11.0;
         }
+	*/
         float stage_size = 1.3;  // meters
         float distance_from_center =
-            stage_size * (subspeaker_index - 0.5 * (output_channels - 1)) /
-            (output_channels - 1);
+            stage_size * (subspeaker_index - 0.5 * (output_channels_arg - 1)) /
+            (output_channels_arg - 1);
         float assumed_distance_to_line = stage_size * 1.6;
-        float right, center, left;
-        rfb.rotators_->GetTriplet(subspeaker_index / (output_channels - 1), rot,
+        float right = 0, center = 0, left = 0;
+	float ratio_expected = subspeaker_index / (output_channels_arg - 1);
+        rfb.rotators_->GetTriplet(ratio_expected,
+			          rot,
                                   rfb.rotators_->channel[1].accu[14][rot],
                                   rfb.rotators_->channel[1].accu[15][rot],
                                   rfb.rotators_->channel[0].accu[14][rot],
@@ -434,7 +453,7 @@ void Process(const int output_channels, const double distance_to_interval_ratio,
               // a smaller acoustic picture of the singer.
               // This relates to Euclidian distances and makes
               // physical sense, too.
-              float len = (output_channels - 1);
+              float len = (output_channels_arg - 1);
               float dx = subspeaker_index - 0.5 * len;
               float dist = sqrt(dx * dx + len * len) - len;
               if (dx < 0) {
@@ -445,31 +464,46 @@ void Process(const int output_channels, const double distance_to_interval_ratio,
             }
 
             float delay_l = 1 + kDelayMul * delay_p;
-            float delay_r = 1 + kDelayMul * ((output_channels - 1) - delay_p);
+            float delay_r = 1 + kDelayMul * ((output_channels_arg - 1) - delay_p);
             binaural.WriteWithFloatDelay(0, delay_l, center * left_gain);
             binaural.WriteWithFloatDelay(1, delay_r, center * right_gain);
           }
 #endif
-
-          float speaker_offset_left = (2 - 7.5) * 0.1;
-          float speaker_offset_right = (13 - 7.5) * 0.1;
-
-          for (int kk = 0; kk < output_channels; ++kk) {
-            float speaker_offset = (kk - 7.5) * 0.1;
-            float val = AngleEffect(speaker_offset + distance_from_center,
-                                    assumed_distance_to_line) *
-                        center;
-            output[out_ix * output_channels + kk] += val;
-
-            output[out_ix * output_channels + kk] +=
+	  
+	  //	  float ilmul = (rot < 70 && rot > 8) ? 2 : 1;
+          // for (int kk = rot & 1; kk < output_channels_arg; kk += 1 + (rot < 70 && rot > 8)) {  // distribute alternating frequencies to every 2nd speaker
+          //for (int kk = rot & 3; kk < output_channels_arg; kk += 4) {  // the same in groups of 4
+	  
+	  if (rot < 22) {
+	    // Bass all with the same signal.
+	    float v = center * (1.0f / output_channels_arg);
+	    for (int kk = 0; kk < output_channels_arg; kk++) {
+	      output[out_ix * output_channels + kk] += v;
+	    }
+	  } else {
+	    for (int kk = 0; kk < output_channels_arg; kk++) {
+	      float ilmul = 1.0;
+	      float speaker_offset = (kk - midpoint) * 0.1;
+	      float val = AngleEffect(speaker_offset + distance_from_center,
+				      assumed_distance_to_line) *
+		center;
+	      output[out_ix * output_channels + kk] += val * ilmul;
+	      
+	      output[out_ix * output_channels + kk] +=
                 AngleEffect(speaker_offset - speaker_offset_right,
                             assumed_distance_to_line) *
-                right;
-            output[out_ix * output_channels + kk] +=
-                AngleEffect(speaker_offset - speaker_offset_left,
-                            assumed_distance_to_line) *
-                left;
-          }
+  	        right * left_right_mul * ilmul;
+	      output[out_ix * output_channels + kk] +=
+	        AngleEffect(speaker_offset - speaker_offset_left,
+			    assumed_distance_to_line) *
+	        left * left_right_mul * ilmul;
+	    }
+	  }
+	  if (two_reverb_channels) {
+	    // two last channels reserved for reverb signal
+            output[(out_ix + 1) * output_channels - 2 ] += left;
+	    output[(out_ix + 1) * output_channels - 1 ] += right;
+	  }
         }
       }
       if (total_in + i >= rfb.max_delay_) {
@@ -505,15 +539,19 @@ int main(int argc, char **argv) {
   QCHECK(input_file) << input_file.strError();
 
   QCHECK_EQ(input_file.channels(), 2);
+  
+  bool two_reverb_channels = true;
 
   SndfileHandle output_file(
       positional_args[2], /*mode=*/SFM_WRITE, /*format=*/SF_FORMAT_WAV | SF_FORMAT_PCM_24,
-      /*channels=*/output_channels, /*samplerate=*/input_file.samplerate());
+      /*channels=*/output_channels + 2 * two_reverb_channels, /*samplerate=*/input_file.samplerate());
 
   SndfileHandle binaural_output_file(
       positional_args[3], /*mode=*/SFM_WRITE, /*format=*/SF_FORMAT_WAV | SF_FORMAT_PCM_24,
       /*channels=*/2, /*samplerate=*/input_file.samplerate());
 
-  Process(output_channels, distance_to_interval_ratio, input_file, output_file,
+  Process(output_channels, distance_to_interval_ratio, 
+	  two_reverb_channels,
+	  input_file, output_file,
           binaural_output_file);
 }
