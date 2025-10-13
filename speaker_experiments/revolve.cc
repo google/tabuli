@@ -26,7 +26,7 @@
 #include "absl/flags/parse.h"
 #include "absl/log/check.h"
 
-ABSL_FLAG(int, output_channels, 12, "number of output channels");
+ABSL_FLAG(int, output_channels, 11, "number of output channels");
 
 // optimize this?!
 ABSL_FLAG(double, distance_to_interval_ratio, 4,
@@ -56,16 +56,14 @@ constexpr int64_t kNumRotators = 128;
 float AngleEffect(float dy, float distance, int rot) {
   float dist2 = dy * dy + distance * distance;
   float cos_angle = distance * distance / dist2; // 2nd
-  if (rot >= 35) {
-    cos_angle *= cos_angle;  // 4th
-  }
-  if (rot >= 45) {
+  cos_angle *= cos_angle;  // 4th
+  if (rot > 30) {
     cos_angle *= cos_angle;  // 8th
   }
-  if (rot >= 65) {
+  if (rot > 50) {
     cos_angle *= cos_angle;  // 16th
   }
-  if (rot >= 85) {
+  if (rot >= 75) {
     cos_angle *= cos_angle;  // 32nd
   }
   if (rot >= 105) {
@@ -96,8 +94,13 @@ struct PerChannel {
   // [2..3] is for real and imag of 2nd leaking accumulation
   // [4..5] is for real and imag of 3rd leaking accumulation
   double accu[16][kNumRotators] = {0};
-  float LenSqr(size_t i) {
-    return accu[14][i] * accu[14][i] + accu[15][i] * accu[15][i];
+  float LenSqr(size_t i, float w) {
+    // prev rotators will be integrated to cur, i.e., they represent the derivative.
+    // if derivative is stronger than the cur value, let's emphasize that so that
+    // beginnings of the sounds are more emphasized in spatialization.
+    //    float prev = (accu[12][i] * accu[12][i] + accu[13][i] * accu[13][i]);
+    float cur = (1-w) * (1-w) * (accu[14][i] * accu[14][i] + accu[15][i] * accu[15][i]);
+    return cur; // 0.1 * prev + cur;
   }
 };
 
@@ -117,6 +120,7 @@ struct Rotators {
   int16_t delay[kNumRotators] = {0};
   int16_t advance[kNumRotators] = {0};
   int16_t max_delay_ = 0;
+
 
   int FindMedian3xLeaker(float window) {
     // Approximate filter delay. TODO: optimize this value along with gain
@@ -176,11 +180,46 @@ struct Rotators {
       }
     }
   }
-  void GetTriplet(float left_to_right_ratio, int rot_ix, float rightr,
-                  float righti, float leftr, float lefti, float &right,
-                  float &center, float &left) {
-    float rlen = sqrt(rightr * rightr + righti * righti) + 1e-20;
-    float llen = sqrt(leftr * leftr + lefti * lefti) + 1e-20;
+  void GetTriplet(float left_to_right_ratio, int rot_ix,
+		  float *out_of_phase_val,
+		  float leftr, float lefti, 
+		  float rightr, float righti,
+		  float &left, float &center,  float &right,
+		  float &out_of_phase_left,
+		  float &out_of_phase_right) {
+    float out_of_phase = 0;
+    float q = rightr * leftr + righti * lefti;
+    if (q < 0 && rot_ix >= 30 && rot_ix < 128 ) {
+      float mul = 2.0 * (rot_ix - 40) * (1.0 / 22.0);
+      if (mul > 1) {
+	mul = 1;
+      }
+      if (mul < 0) {
+	mul = 0;
+      }
+      out_of_phase = mul * -q / (0.5 * (((rightr * rightr + righti * righti) + (leftr * leftr + lefti * lefti))));
+    }
+    out_of_phase_val[0] += 0.001 * out_of_phase;
+    out_of_phase_val[0] *= 0.999;
+    out_of_phase_val[1] += 0.001 * out_of_phase_val[0];
+    out_of_phase_val[1] *= 0.999;
+    out_of_phase_val[2] += 0.001 * out_of_phase_val[1];
+    out_of_phase_val[2] *= 0.999;
+    out_of_phase_val[0] += 0.002 * out_of_phase_val[2];
+    out_of_phase_val[0] *= 0.998;
+    out_of_phase_val[1] += 0.002 * out_of_phase_val[2];
+    out_of_phase_val[1] *= 0.998;
+    out_of_phase_val[0] += 0.002 * out_of_phase_val[1];
+    out_of_phase_val[0] *= 0.998;
+    out_of_phase_left = out_of_phase_val[2] * (rot[2][rot_ix] * rightr + rot[3][rot_ix] * righti);
+    out_of_phase_right = out_of_phase_val[2] * (rot[2][rot_ix] * leftr + rot[3][rot_ix] * lefti);
+    leftr *= 1.0 - out_of_phase_val[2];
+    lefti *= 1.0 - out_of_phase_val[2];
+    rightr *= 1.0 - out_of_phase_val[2];
+    righti *= 1.0 - out_of_phase_val[2];
+
+    float rlen = (rightr * rightr + righti * righti) + 1e-20;
+    float llen = (leftr * leftr + lefti * lefti) + 1e-20;
     float invsumlen = 1.0 / (rlen + llen);
     rlen *= invsumlen;
     llen *= invsumlen;
@@ -197,6 +236,7 @@ struct Rotators {
 
     right = rot[2][rot_ix] * rightr + rot[3][rot_ix] * righti;
     left = rot[2][rot_ix] * leftr + rot[3][rot_ix] * lefti;
+    //center = left = right = 0;
   }
 };
 
@@ -348,6 +388,11 @@ void Process(const int output_channels_arg, const double distance_to_interval_ra
 
   int64_t total_in = 0;
   bool extend_the_end = true;
+  float speaker_index_array[kNumRotators];
+  for (int i = 0; i < 128; ++i) {
+    speaker_index_array[i] = 0.5 * (output_channels_arg - 1);
+  }
+  float out_of_phase_array[kNumRotators][3] = {{0}};
   for (;;) {
     int64_t out_ix = 0;
     int64_t read = input_stream.readf(input.data(), kBlockSize);
@@ -385,14 +430,17 @@ void Process(const int output_channels_arg, const double distance_to_interval_ra
       rfb.rotators_->IncrementAll();
       for (int rot = kNumRotators - 1; rot >= 0; --rot) {
         const float ratio =
-            ActualLeftToRightRatio(rfb.rotators_->channel[1].LenSqr(rot),
-                                   rfb.rotators_->channel[0].LenSqr(rot));
+	  ActualLeftToRightRatio(rfb.rotators_->channel[1].LenSqr(rot, rfb.rotators_->window[rot]),
+				 rfb.rotators_->channel[0].LenSqr(rot, rfb.rotators_->window[rot]));
         float subspeaker_index =
             (std::lower_bound(speaker_to_ratio_table.begin(),
                               speaker_to_ratio_table.end(), ratio,
                               std::greater<>()) -
              speaker_to_ratio_table.begin()) *
             (1.0 / kSubSourcePrecision);
+	speaker_index_array[rot] *= 0.9;
+	speaker_index_array[rot] += 0.1 * subspeaker_index;
+	subspeaker_index = speaker_index_array[rot];
 	/*
         if (subspeaker_index < 1.0) {
           subspeaker_index = 1.0;
@@ -407,15 +455,21 @@ void Process(const int output_channels_arg, const double distance_to_interval_ra
             (output_channels_arg - 1);
         float assumed_distance_to_line = stage_size * 1.6;
         float right = 0, center = 0, left = 0;
+	float out_of_phase_right = 0;
+	float out_of_phase_left = 0;
 	float ratio_expected = subspeaker_index / (output_channels_arg - 1);
         rfb.rotators_->GetTriplet(ratio_expected,
 			          rot,
-                                  rfb.rotators_->channel[1].accu[14][rot],
-                                  rfb.rotators_->channel[1].accu[15][rot],
+				  &out_of_phase_array[rot][0],
                                   rfb.rotators_->channel[0].accu[14][rot],
                                   rfb.rotators_->channel[0].accu[15][rot],
+                                  rfb.rotators_->channel[1].accu[14][rot],
+                                  rfb.rotators_->channel[1].accu[15][rot],
+				  left,
+                                  center,
 				  right,
-                                  center, left);
+				  out_of_phase_left,
+				  out_of_phase_right);
         if (total_in + i >= rfb.max_delay_) {
 #define BINAURAL
 #ifdef BINAURAL
@@ -505,33 +559,36 @@ void Process(const int output_channels_arg, const double distance_to_interval_ra
 	    }
 	  } else {
 	    std::vector<float> w(output_channels_arg);
-	    float sum = 1e-10;
-	    for (int kk = 0; kk < output_channels_arg; kk++) {
-	      float speaker_offset = (kk - midpoint) * 0.1;
-	      w[kk] = AngleEffect(speaker_offset + distance_from_center,
-				  assumed_distance_to_line, rot);
-	      sum += w[kk];
+	    {
+	      float sum = 1e-20;
+	      for (int kk = 0; kk < output_channels_arg; kk++) {
+		float speaker_offset = (kk - midpoint) * 0.1;
+		w[kk] = AngleEffect(speaker_offset + distance_from_center,
+				    assumed_distance_to_line, rot);
+		sum += w[kk];
+	      }
+	      float scale = 1.0f / sum;
+	      for (int kk = 0; kk < output_channels_arg; kk++) {
+		output[out_ix * output_channels + kk] += w[kk] * center * scale;
+	      }
 	    }
-	    float scale = 1.0f / sum;
-	    for (int kk = 0; kk < output_channels_arg; kk++) {
-	      output[out_ix * output_channels + kk] += w[kk] * center * scale;
+	    output[out_ix * output_channels + 0] += 0.06 * left;
+	    output[out_ix * output_channels + 1] += 0.06 * left;
+	    output[out_ix * output_channels + 2] += 0.05 * left;
+	    output[out_ix * output_channels + 3] += 0.03 * left;
+	    output[out_ix * output_channels + output_channels_arg - 4] += 0.03 * right;
+	    output[out_ix * output_channels + output_channels_arg - 3] += 0.05 * right;
+	    output[out_ix * output_channels + output_channels_arg - 2] += 0.06 * right;
+	    output[out_ix * output_channels + output_channels_arg - 1] += 0.06 * right;
+	    float one_per_output_channels_arg = 1.0f / output_channels_arg;
+	    if (two_reverb_channels) {
+	      // two last channels reserved for reverb signal
+	      // add hock normalization
+	      output[(out_ix + 1) * output_channels - 2 ] += left * one_per_output_channels_arg;
+	      output[(out_ix + 1) * output_channels - 1 ] += right * one_per_output_channels_arg;
+	      output[(out_ix + 1) * output_channels - 2 ] += out_of_phase_left * 0.5;
+	      output[(out_ix + 1) * output_channels - 1 ] += out_of_phase_right * 0.5;
 	    }
-	  }
-	  output[out_ix * output_channels + 0] += 0.25 * left;
-	  output[out_ix * output_channels + 1] += 0.30 * left;
-	  output[out_ix * output_channels + 2] += 0.25 * left;
-	  output[out_ix * output_channels + 3] += 0.20 * left;
-	  output[out_ix * output_channels + output_channels_arg - 4] += 0.20 * right;
-	  output[out_ix * output_channels + output_channels_arg - 3] += 0.25 * right;
-	  output[out_ix * output_channels + output_channels_arg - 2] += 0.30 * right;
-	  output[out_ix * output_channels + output_channels_arg - 1] += 0.25 * right;
-
-	  float one_per_output_channels_arg = 1.0f / output_channels_arg;
-	  if (two_reverb_channels) {
-	    // two last channels reserved for reverb signal
-	    // add hock normalization
-	    output[(out_ix + 1) * output_channels - 2 ] += left * one_per_output_channels_arg;
-	    output[(out_ix + 1) * output_channels - 1 ] += right * one_per_output_channels_arg;
 	  }
         }
       }
