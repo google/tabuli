@@ -424,6 +424,11 @@ void Process(const int output_channels_arg, const double distance_to_interval_ra
           int64_t delayed_ix = total_in + i - rfb.rotators_->advance[rot];
           size_t histo_ix = 2 * (delayed_ix & kHistoryMask);
           float delayed = history[histo_ix + c];
+	  // Mathematically should be less than 0.5 because two channels can add up.
+	  // Imperfect phase corrections etc. can lead to further rendering problems,
+	  // thus better to correct more than 0.1 
+	  float kNormalizationToReduceAmplitude = 0.1;
+	  delayed *= kNormalizationToReduceAmplitude;
           rfb.rotators_->AddAudio(c, rot, delayed);
         }
       }
