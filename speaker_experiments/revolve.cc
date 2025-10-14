@@ -184,33 +184,33 @@ struct Rotators {
 		  float *out_of_phase_val,
 		  float leftr, float lefti, 
 		  float rightr, float righti,
+		  float prev_leftr, float prev_lefti, 
+		  float prev_rightr, float prev_righti,
+		  float window,
 		  float &left, float &center,  float &right,
 		  float &out_of_phase_left,
 		  float &out_of_phase_right) {
     float out_of_phase = 0;
-    float q = rightr * leftr + righti * lefti;
+    float q = prev_rightr * prev_leftr + prev_righti * prev_lefti;
     if (q < 0 && rot_ix >= 30 && rot_ix < 128 ) {
-      float mul = 2.0 * (rot_ix - 40) * (1.0 / 22.0);
+      float mul = 2.0 * (rot_ix - 44) * (1.0 / 24.0);
       if (mul > 1) {
 	mul = 1;
       }
       if (mul < 0) {
 	mul = 0;
       }
-      out_of_phase = mul * -q / (0.5 * (((rightr * rightr + righti * righti) + (leftr * leftr + lefti * lefti))));
+      out_of_phase = mul * -q / (0.5 * (((prev_rightr * prev_rightr + prev_righti * prev_righti) + (prev_leftr * prev_leftr + prev_lefti * prev_lefti))));
+      out_of_phase *= (1.0 / window);
+      out_of_phase *= (1.0 / window);
+      out_of_phase *= (1.0 / window);
     }
-    out_of_phase_val[0] += 0.001 * out_of_phase;
-    out_of_phase_val[0] *= 0.999;
-    out_of_phase_val[1] += 0.001 * out_of_phase_val[0];
-    out_of_phase_val[1] *= 0.999;
-    out_of_phase_val[2] += 0.001 * out_of_phase_val[1];
-    out_of_phase_val[2] *= 0.999;
-    out_of_phase_val[0] += 0.002 * out_of_phase_val[2];
-    out_of_phase_val[0] *= 0.998;
-    out_of_phase_val[1] += 0.002 * out_of_phase_val[2];
-    out_of_phase_val[1] *= 0.998;
-    out_of_phase_val[0] += 0.002 * out_of_phase_val[1];
-    out_of_phase_val[0] *= 0.998;
+    out_of_phase_val[0] *= 1 - window;
+    out_of_phase_val[0] += window * out_of_phase;
+    out_of_phase_val[1] *= 1 - window;
+    out_of_phase_val[1] += window * out_of_phase_val[0];
+    out_of_phase_val[2] *= 1 - window;
+    out_of_phase_val[2] += window * out_of_phase_val[1];
     out_of_phase_left = out_of_phase_val[2] * (rot[2][rot_ix] * rightr + rot[3][rot_ix] * righti);
     out_of_phase_right = out_of_phase_val[2] * (rot[2][rot_ix] * leftr + rot[3][rot_ix] * lefti);
     leftr *= 1.0 - out_of_phase_val[2];
@@ -236,7 +236,8 @@ struct Rotators {
 
     right = rot[2][rot_ix] * rightr + rot[3][rot_ix] * righti;
     left = rot[2][rot_ix] * leftr + rot[3][rot_ix] * lefti;
-    //center = left = right = 0;
+    // center = 0;
+    // center = left = right = 0;
   }
 };
 
@@ -424,6 +425,12 @@ void Process(const int output_channels_arg, const double distance_to_interval_ra
           int64_t delayed_ix = total_in + i - rfb.rotators_->advance[rot];
           size_t histo_ix = 2 * (delayed_ix & kHistoryMask);
           float delayed = history[histo_ix + c];
+	  // Mathematically should be less than 0.5 because two channels can add up.
+	  // Imperfect phase corrections etc. can lead to further rendering problems,
+	  // thus better to correct more than 0.5, i.e., for example 0.1 and normalize
+	  // the output using external tools (such as sox).
+	  float kNormalizationToReduceAmplitude = 0.1;
+	  delayed *= kNormalizationToReduceAmplitude;
           rfb.rotators_->AddAudio(c, rot, delayed);
         }
       }
@@ -438,8 +445,8 @@ void Process(const int output_channels_arg, const double distance_to_interval_ra
                               std::greater<>()) -
              speaker_to_ratio_table.begin()) *
             (1.0 / kSubSourcePrecision);
-	speaker_index_array[rot] *= 0.9;
-	speaker_index_array[rot] += 0.1 * subspeaker_index;
+	speaker_index_array[rot] *= 0.75;
+	speaker_index_array[rot] += 0.25 * subspeaker_index;
 	subspeaker_index = speaker_index_array[rot];
 	/*
         if (subspeaker_index < 1.0) {
@@ -453,7 +460,7 @@ void Process(const int output_channels_arg, const double distance_to_interval_ra
         float distance_from_center =
             stage_size * (subspeaker_index - 0.5 * (output_channels_arg - 1)) /
             (output_channels_arg - 1);
-        float assumed_distance_to_line = stage_size * 1.6;
+        float assumed_distance_to_line = stage_size * 2.0;
         float right = 0, center = 0, left = 0;
 	float out_of_phase_right = 0;
 	float out_of_phase_left = 0;
@@ -465,6 +472,11 @@ void Process(const int output_channels_arg, const double distance_to_interval_ra
                                   rfb.rotators_->channel[0].accu[15][rot],
                                   rfb.rotators_->channel[1].accu[14][rot],
                                   rfb.rotators_->channel[1].accu[15][rot],
+                                  rfb.rotators_->channel[0].accu[8][rot],
+                                  rfb.rotators_->channel[0].accu[9][rot],
+                                  rfb.rotators_->channel[1].accu[8][rot],
+                                  rfb.rotators_->channel[1].accu[9][rot],
+				  rfb.rotators_->window[rot],
 				  left,
                                   center,
 				  right,
@@ -572,15 +584,12 @@ void Process(const int output_channels_arg, const double distance_to_interval_ra
 		output[out_ix * output_channels + kk] += w[kk] * center * scale;
 	      }
 	    }
-	    output[out_ix * output_channels + 0] += 0.06 * left;
-	    output[out_ix * output_channels + 1] += 0.06 * left;
-	    output[out_ix * output_channels + 2] += 0.05 * left;
-	    output[out_ix * output_channels + 3] += 0.03 * left;
-	    output[out_ix * output_channels + output_channels_arg - 4] += 0.03 * right;
-	    output[out_ix * output_channels + output_channels_arg - 3] += 0.05 * right;
-	    output[out_ix * output_channels + output_channels_arg - 2] += 0.06 * right;
-	    output[out_ix * output_channels + output_channels_arg - 1] += 0.06 * right;
-	    float one_per_output_channels_arg = 1.0f / output_channels_arg;
+	    float sidew[4] = { 0.06, 0.06, 0.05, 0.03 };
+	    for (int zz = 0; zz < 4; ++zz) {
+	      output[out_ix * output_channels + zz] += sidew[zz] * left;
+	      output[out_ix * output_channels + output_channels_arg - 1 - zz] += sidew[zz] * right;
+	    }
+	    float one_per_output_channels_arg = 0.5 * (1.0 - sidew[0] - sidew[1] - sidew[2] - sidew[3]);
 	    if (two_reverb_channels) {
 	      // two last channels reserved for reverb signal
 	      // add hock normalization
