@@ -564,16 +564,20 @@ void Process(const int output_channels_arg, const double distance_to_interval_ra
 	  float off = subspeaker_index - speaker;
 
 	  if (rot < 25) {
-	    /*
 	    output[out_ix * output_channels + 0] += 0.5 * right;
 	    output[out_ix * output_channels + 1] += 0.5 * right;
 	    output[out_ix * output_channels + output_channels_arg - 2] += 0.5 * left;
 	    output[out_ix * output_channels + output_channels_arg - 1] += 0.5 * left;
-	    */
-	    // Bass all with the same signal.
 	    float v = center * (1.0f / output_channels_arg);
 	    for (int kk = 0; kk < output_channels_arg; kk++) {
 	      output[out_ix * output_channels + kk] += v;
+	    }
+	    float one_per_output_channels_arg = 0.5;
+	    if (two_reverb_channels) {
+	      output[(out_ix + 1) * output_channels - 2 ] += left * one_per_output_channels_arg;
+	      output[(out_ix + 1) * output_channels - 1 ] += right * one_per_output_channels_arg;
+	      output[(out_ix + 1) * output_channels - 2 ] += out_of_phase_left * 0.5;
+	      output[(out_ix + 1) * output_channels - 1 ] += out_of_phase_right * 0.5;
 	    }
 	  } else {
 	    std::vector<float> w(output_channels_arg);
