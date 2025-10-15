@@ -94,12 +94,12 @@ struct PerChannel {
   // [2..3] is for real and imag of 2nd leaking accumulation
   // [4..5] is for real and imag of 3rd leaking accumulation
   double accu[16][kNumRotators] = {0};
-  float LenSqr(size_t i, float w) {
+  float LenSqr(size_t i) {
     // prev rotators will be integrated to cur, i.e., they represent the derivative.
     // if derivative is stronger than the cur value, let's emphasize that so that
     // beginnings of the sounds are more emphasized in spatialization.
     //    float prev = (accu[12][i] * accu[12][i] + accu[13][i] * accu[13][i]);
-    float cur = (1-w) * (1-w) * (accu[14][i] * accu[14][i] + accu[15][i] * accu[15][i]);
+    float cur = (accu[8][i] * accu[8][i] + accu[9][i] * accu[9][i]);
     return cur; // 0.1 * prev + cur;
   }
 };
@@ -389,9 +389,11 @@ void Process(const int output_channels_arg, const double distance_to_interval_ra
 
   int64_t total_in = 0;
   bool extend_the_end = true;
-  float speaker_index_array[kNumRotators];
+  float speaker_index_array[kNumRotators][3];
   for (int i = 0; i < 128; ++i) {
-    speaker_index_array[i] = 0.5 * (output_channels_arg - 1);
+    speaker_index_array[i][0] = 0.5 * (output_channels_arg - 1);
+    speaker_index_array[i][1] = 0.5 * (output_channels_arg - 1);
+    speaker_index_array[i][2] = 0.5 * (output_channels_arg - 1);
   }
   float out_of_phase_array[kNumRotators][3] = {{0}};
   for (;;) {
@@ -437,17 +439,21 @@ void Process(const int output_channels_arg, const double distance_to_interval_ra
       rfb.rotators_->IncrementAll();
       for (int rot = kNumRotators - 1; rot >= 0; --rot) {
         const float ratio =
-	  ActualLeftToRightRatio(rfb.rotators_->channel[1].LenSqr(rot, rfb.rotators_->window[rot]),
-				 rfb.rotators_->channel[0].LenSqr(rot, rfb.rotators_->window[rot]));
+	  ActualLeftToRightRatio(rfb.rotators_->channel[1].LenSqr(rot),
+				 rfb.rotators_->channel[0].LenSqr(rot));
         float subspeaker_index =
             (std::lower_bound(speaker_to_ratio_table.begin(),
                               speaker_to_ratio_table.end(), ratio,
                               std::greater<>()) -
              speaker_to_ratio_table.begin()) *
             (1.0 / kSubSourcePrecision);
-	speaker_index_array[rot] *= 0.75;
-	speaker_index_array[rot] += 0.25 * subspeaker_index;
-	subspeaker_index = speaker_index_array[rot];
+	speaker_index_array[rot][0] *= 1.0 - rfb.rotators_->window[rot];
+	speaker_index_array[rot][0] += rfb.rotators_->window[rot] * subspeaker_index;
+	speaker_index_array[rot][1] *= 1.0 - rfb.rotators_->window[rot];
+	speaker_index_array[rot][1] += rfb.rotators_->window[rot] * speaker_index_array[rot][0];
+	speaker_index_array[rot][2] *= 1.0 - rfb.rotators_->window[rot];
+	speaker_index_array[rot][2] += rfb.rotators_->window[rot] * speaker_index_array[rot][1];
+	subspeaker_index = speaker_index_array[rot][2];
 	/*
         if (subspeaker_index < 1.0) {
           subspeaker_index = 1.0;
