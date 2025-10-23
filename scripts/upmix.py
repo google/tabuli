@@ -48,7 +48,7 @@ run("sox /tmp/16speakers.wav -e float -b 32 /tmp/stereo.wav remix " + mix1 + " "
 
 #run("sox /tmp/16speakers.wav -b 24 /tmp/down3-norm.wav remix 0 0 1v1 2v1 3v1 4v1 5v1 6v1 7v1 8v1 0 0 9v1.0 10v1.0 11v1.0 12v1.0 13v1.0 14v1.0 15v1.0 16v1.0 norm -32")
 
-run("sox /tmp/16speakers.wav -b 24 /tmp/down3-norm.wav remix 0 0 13 13 1v1 2v1 3v1 4v1 5v1 6v1 7v1 8v1 0 0 9v1.0 10v1.0 11v1.0 12v1.0 14 14 norm -32")
+run("sox /tmp/16speakers.wav -b 24 /tmp/down3-norm.wav remix 0 0 12 12 1v1 2v1 3v1 4v1 5v1 6v1 0 0 7 8 9 10 11 0 13 13 norm -32")
 
 run("amixer --card 3 cset numid=3,iface=MIXER,name='UMC1820 Output Playback Volume' 127,127,127,127,127,127,127,127,122,122,122,122,122,122,122,122")
 #run("amixer --card 3 cset numid=3,iface=MIXER,name='UMC1820 Output Playback Volume' 127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127")
