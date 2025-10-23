@@ -397,10 +397,6 @@ void Process(const int output_channels_arg, const double distance_to_interval_ra
   BinauralModel binaural;
   float *btable = GetBinauralTable();
   constexpr int64_t kNumRotators = 128;
-  std::vector<float> freqs(kNumRotators);
-  for (size_t i = 0; i < kNumRotators; ++i) {
-    freqs[i] = FreqAve(i);
-  }
   std::vector<float> filter_gains(kNumRotators);
   for (size_t i = 0; i < kNumRotators; ++i) {
     filter_gains[i] = 0.1; // feels like 1.0 clips occasionally in current config
