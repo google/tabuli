@@ -51,7 +51,7 @@ float ActualLeftToRightRatio(float left, float right) {
   return (1e-14 + left) / (1e-14 + right);
 }
 
-constexpr int64_t kNumRotators = 128;
+constexpr int64_t kNumRotators = 256;
 
 float AngleEffect(float dy, float distance, int rot) {
   float dist2 = dy * dy + distance * distance;
@@ -66,50 +66,9 @@ float AngleEffect(float dy, float distance, int rot) {
 
 float Freq(int i) {
   // Center frequencies of the filter bank, plus one frequency in both ends.
-  static const float kFreq[130] = {
-    18.941220001544476, 20.0, 21.117963888671575, 22.298419940161835,
-    23.54486135353859, 24.860976591390344, 26.25066029470453,
-    27.71802480786775, 29.2674123478927, 30.903407853882932,
-    32.630852554759464, 34.45485829539885, 36.38082266357646,
-    38.414444962478605, 40.56174307604924, 42.82907127707911,
-    45.223139030734885, 47.75103084917166, 50.42022725598248,
-    53.23862692252262, 56.21457004161455, 59.35686300780074,
-    62.67480447717809, 66.17821288392992, 69.87745549498261,
-    73.78347908876489, 77.90784234885456, 82.26275006837143,
-    86.86108926633416, 91.71646732285615, 96.84325224603013,
-    102.25661518965882, 107.97257534765004, 114.0080473579272,
-    120.38089135613325, 127.10996582724593, 134.21518341150286,
-    141.7175698297775, 149.63932610277664, 158.0038942481794,
-    166.83602665012674, 176.1618593063412, 186.0089891696278,
-    196.4065558126252, 207.38532765746882, 218.9777930255374,
-    231.21825627671484, 244.14293932266378, 257.79008881450744,
-    272.2000893221103, 287.41558283987507, 303.4815949726989,
-    320.44566817549537, 338.3580024405672, 357.2716038491473,
-    377.2424414267036, 398.32961276617135, 420.59551890922694,
-    444.1060490031068, 468.930775279411, 495.14315893186836,
-    522.8207675022983, 552.0455044180545, 582.9038513601981,
-    615.4871241796124, 649.8917431183685, 686.2195181359765,
-    724.5779501848579, 765.0805493265749, 807.8471706301816,
-    853.0043688466839, 900.6857729091678, 951.0324813668026,
-    1004.193479922893, 1060.3260823125547, 1119.5963958246566,
-    1182.179812845597, 1248.261529879493, 1318.0370955806532,
-    1391.7129894200898, 1469.5072326984312, 1551.6500337133582,
-    1638.384468990736, 1729.967202595336, 1826.6692456497242,
-    1928.776758308892, 2036.5918965638102, 2150.433706379785,
-    2270.6390678155235, 2397.5636919167555, 2531.5831733344066,
-    2673.0941017822297, 2822.5152356229046, 2980.288741055494,
-    3146.8815005712195, 3322.7864945495817, 3508.5242600831834,
-    3704.6444313482402, 3911.727366079019, 4130.385862959254,
-    4361.266975012655, 4605.053924358662, 4862.468123999577,
-    5134.271312621984, 5421.267808729672, 5724.306890778544,
-    6044.285310356758, 6382.149945847103, 6738.900604424317,
-    7115.592980678994, 7513.3417806231955, 7933.324020322401,
-    8376.782508914963, 8845.029526326092, 9339.450706559412,
-    9861.509138057494, 10412.749693265143, 10994.803600207473,
-    11609.393269610882, 12258.337391851472, 12943.556318813591,
-    13667.07774658461, 14431.042715802032, 15237.711947409214,
-    16089.472532568358, 16988.8449965276, 17938.49075734543,
-    18941.220001544476, 20000.0, 21117.963888671577
+  // [20 * 10**(3 * i / 240.) for i in range(-16, 242)]
+  static const float kFreq[258] = {
+    12.619146889603865, 12.987632631524226, 13.366878351372293, 13.757198246176152, 14.158915687682757, 14.572363490264555, 14.997884186649117, 15.435830311700247, 15.88656469448563, 16.350460758872998, 16.827902832903902, 17.31928646720131, 17.82501876267491, 18.34551870779559, 18.88121752571847, 19.432559031542123, 20.0, 20.584010543888564, 21.185074503545778, 21.80368984770255, 22.44036908603927, 23.095639693789167, 23.77004454874037, 24.46414238099863, 25.178508235883346, 25.913733950340387, 26.67042864326648, 27.44921922015124, 28.250750892455088, 29.075687712153236, 29.92471312188867, 30.798530521189843, 31.697863849222273, 32.62345818455677, 33.57608036245121, 34.55651961015727, 35.56558820077846, 36.60412212622112, 37.67298178979601, 38.773052719044145, 39.90524629937759, 41.070500529142926, 42.26978079673294, 43.50408068039045, 44.77442277136679, 46.08185952111691, 47.4274741132331, 48.81238136083961, 50.237728630191604, 51.70469679124381, 53.2145011959762, 54.768392685287225, 56.367658625289074, 58.013623973863076, 59.70765237835919, 61.45114730534893, 63.24555320336759, 65.09235669960917, 66.99308783156553, 68.94932131462987, 70.9626778467151, 73.03482545096755, 75.16748085768883, 77.36241092661044, 79.62143411069944, 81.94642196270831, 84.33930068571644, 86.80205272894875, 89.33671843019263, 91.94539770617442, 94.63025179229611, 97.39350503317262, 100.23744672545445, 103.16443301446114, 106.17688884619767, 109.27730997637086, 112.46826503806983, 115.75239766982412, 119.13242870580208, 122.61115842996415, 126.19146889603867, 129.87632631524227, 133.6687835137229, 137.57198246176154, 141.5891568768276, 145.72363490264556, 149.97884186649117, 154.35830311700246, 158.8656469448563, 163.50460758872998, 168.27902832903902, 173.1928646720131, 178.2501876267491, 183.4551870779559, 188.81217525718466, 194.32559031542127, 200.0, 205.8401054388856, 211.85074503545775, 218.03689847702557, 224.40369086039271, 230.95639693789164, 237.70044548740367, 244.64142380998626, 251.7850823588335, 259.13733950340395, 266.7042864326648, 274.49219220151235, 282.5075089245508, 290.75687712153245, 299.2471312188867, 307.9853052118984, 316.9786384922227, 326.2345818455676, 335.76080362451216, 345.5651961015727, 355.65588200778456, 366.04122126221114, 376.72981789796006, 387.73052719044153, 399.052462993776, 410.7050052914292, 422.6978079673293, 435.04080680390445, 447.744227713668, 460.81859521116917, 474.27474113233103, 488.123813608396, 502.3772863019159, 517.0469679124383, 532.145011959762, 547.6839268528722, 563.6765862528907, 580.1362397386306, 597.076523783592, 614.5114730534895, 632.4555320336758, 650.9235669960917, 669.9308783156551, 689.4932131462988, 709.626778467151, 730.3482545096755, 751.6748085768883, 773.6241092661043, 796.2143411069947, 819.4642196270831, 843.3930068571646, 868.0205272894875, 893.367184301926, 919.4539770617446, 946.3025179229611, 973.9350503317262, 1002.3744672545445, 1031.644330144611, 1061.768888461977, 1092.7730997637086, 1124.682650380698, 1157.5239766982413, 1191.3242870580207, 1226.1115842996417, 1261.9146889603867, 1298.7632631524227, 1336.687835137229, 1375.719824617615, 1415.891568768276, 1457.2363490264556, 1499.7884186649117, 1543.5830311700247, 1588.6564694485628, 1635.0460758873005, 1682.79028329039, 1731.9286467201305, 1782.5018762674908, 1834.5518707795588, 1888.121752571847, 1943.2559031542128, 2000.0, 2058.401054388857, 2118.507450354577, 2180.368984770256, 2244.036908603926, 2309.563969378916, 2377.004454874038, 2446.414238099863, 2517.850823588335, 2591.373395034038, 2667.0428643266478, 2744.9219220151253, 2825.075089245508, 2907.5687712153244, 2992.471312188866, 3079.8530521189837, 3169.7863849222285, 3262.345818455676, 3357.608036245121, 3455.6519610157256, 3556.5588200778457, 3660.4122126221137, 3767.2981789796, 3877.3052719044153, 3990.5246299377577, 4107.050052914292, 4226.978079673296, 4350.408068039044, 4477.44227713668, 4608.185952111689, 4742.74741132331, 4881.238136083963, 5023.77286301916, 5170.469679124382, 5321.450119597617, 5476.839268528722, 5636.76586252891, 5801.362397386306, 5970.765237835921, 6145.114730534891, 6324.555320336759, 6509.235669960921, 6699.308783156552, 6894.932131462989, 7096.267784671507, 7303.482545096754, 7516.748085768886, 7736.241092661041, 7962.1434110699465, 8194.642196270826, 8433.930068571646, 8680.20527289488, 8933.67184301926, 9194.539770617446, 9463.025179229606, 9739.350503317262, 10023.74467254545, 10316.44330144611, 10617.688884619769, 10927.73099763708, 11246.82650380698, 11575.239766982417, 11913.242870580207, 12261.115842996416, 12619.14688960386, 12987.632631524228, 13366.878351372297, 13757.198246176149, 14158.915687682762, 14572.363490264546, 14997.884186649117, 15435.830311700254, 15886.564694485625, 16350.460758873003, 16827.902832903896, 17319.286467201306, 17825.018762674918, 18345.51870779559, 18881.21752571847, 19432.559031542118, 20000.0, 20584.010543888573
   };
   return kFreq[i + 1];
 }
@@ -126,14 +85,11 @@ struct PerChannel {
   // [0..1] is for real and imag of 1st leaking accumulation
   // [2..3] is for real and imag of 2nd leaking accumulation
   // [4..5] is for real and imag of 3rd leaking accumulation
+  // etc.
+  // [14..15] is for real and imag of the 8th order leaking accumulation
   double accu[16][kNumRotators] = {0};
   float LenSqr(size_t i) {
-    // prev rotators will be integrated to cur, i.e., they represent the derivative.
-    // if derivative is stronger than the cur value, let's emphasize that so that
-    // beginnings of the sounds are more emphasized in spatialization.
-    //    float prev = (accu[12][i] * accu[12][i] + accu[13][i] * accu[13][i]);
-    float cur = (accu[8][i] * accu[8][i] + accu[9][i] * accu[9][i]);
-    return cur; // 0.1 * prev + cur;
+    return accu[14][i] * accu[14][i] + accu[15][i] * accu[15][i];
   }
 };
 
@@ -151,6 +107,7 @@ struct Rotators {
   float window[kNumRotators];
   float gain[kNumRotators];
   int16_t delay[kNumRotators] = {0};
+  float inputphase[2][kNumRotators] = {0};
   int16_t advance[kNumRotators] = {0};
   int16_t max_delay_ = 0;
 
@@ -160,7 +117,7 @@ struct Rotators {
     // values. Recordings can sound better with -2.32 as it pushes the bass
     // signals a bit earlier and likely compensates human hearing's deficiency
     // for temporal separation.
-    static const double kMagic = 5.46;
+    static const double kMagic = 6.088830630584044;
     return kMagic / window;
   }
 
@@ -169,7 +126,8 @@ struct Rotators {
     channel.resize(num_channels);
     static const float kSampleRate = 48000.0;
     static const float kHzToRad = 2.0f * M_PI / kSampleRate;
-    static const double kWindow = 0.99964;
+    //    static const double kWindow = 0.9988311560491858
+    static const double kWindow = 0.9994979253227846;
     for (int i = 0; i < kNumRotators; ++i) {
       float bandwidth = CalculateBandwidthInHz(i);  // bandwidth per bucket.
       window[i] = std::pow(kWindow, bandwidth);
@@ -186,10 +144,285 @@ struct Rotators {
     for (size_t i = 0; i < kNumRotators; ++i) {
       advance[i] = 1 + max_delay_ - delay[i];
     }
+    inputphase[0][0] = 1;
+    inputphase[0][1] = 0;
+    float prev_phase = 0;
+    double phase_array[256] = {
+  -0.41128396750238466 + atof(getenv("VAR0")),
+  0.14413149159675934 + atof(getenv("VAR1")),
+  0.021274476505972084 + atof(getenv("VAR2")),
+  -0.21196830370068651 + atof(getenv("VAR3")),
+  -0.34419382471041743 + atof(getenv("VAR4")),
+  -0.29612125432028003 + atof(getenv("VAR5")),
+  -0.23182800493745531 + atof(getenv("VAR6")),
+  -0.018538269603347396 + atof(getenv("VAR7")),
+  -0.58854420863440127 + atof(getenv("VAR8")),
+  -0.51197602219531801 + atof(getenv("VAR9")),
+  -0.34972172280628505 + atof(getenv("VAR10")),
+  -0.31735320341702145 + atof(getenv("VAR11")),
+  -0.063717333053197392 + atof(getenv("VAR12")),
+  -0.27796160979119855 + atof(getenv("VAR13")),
+  -0.31869707893612614 + atof(getenv("VAR14")),
+  -0.32288002998171217 + atof(getenv("VAR15")),
+  -0.17527259192965616 + atof(getenv("VAR16")),
+  0.6157422844233188 + atof(getenv("VAR17")),
+  -0.12386376062052776 + atof(getenv("VAR18")),
+  -0.003842335773525829 + atof(getenv("VAR19")),
+  -0.90257289357002235 + atof(getenv("VAR20")),
+  -0.074624898286712094 + atof(getenv("VAR21")),
+  -0.22389566267119781 + atof(getenv("VAR22")),
+  -0.82384555743454502 + atof(getenv("VAR23")),
+  0.40393700634043339 + atof(getenv("VAR24")),
+  0.49983232929210197 + atof(getenv("VAR25")),
+  -0.50985126308315509 + atof(getenv("VAR26")),
+  -0.077588573860645951 + atof(getenv("VAR27")),
+  -0.046922701186041624 + atof(getenv("VAR28")),
+  -0.69440452032484479 + atof(getenv("VAR29")),
+  -0.27521309439802666 + atof(getenv("VAR30")),
+  0.42611640386110594 + atof(getenv("VAR31")),
+  0.36512797177422923 + atof(getenv("VAR32")),
+  -0.78069611850924425 + atof(getenv("VAR33")),
+  -0.77175842278104512 + atof(getenv("VAR34")),
+  0.21491880062971366 + atof(getenv("VAR35")),
+  0.0044728528995094663 + atof(getenv("VAR36")),
+  0.60358676531335309 + atof(getenv("VAR37")),
+  -0.12712616281856604 + atof(getenv("VAR38")),
+  -0.41728699634001404 + atof(getenv("VAR39")),
+  -0.39058422081934907 + atof(getenv("VAR40")),
+  0.50344422594729443 + atof(getenv("VAR41")),
+  -0.18398368880963781 + atof(getenv("VAR42")),
+  0.67008342041556779 + atof(getenv("VAR43")),
+  -0.049897926706402182 + atof(getenv("VAR44")),
+  -0.012117688967481013 + atof(getenv("VAR45")),
+  0.097420497023830432 + atof(getenv("VAR46")),
+  0.0029813146148219838 + atof(getenv("VAR47")),
+  -0.088777640948113579 + atof(getenv("VAR48")),
+  0.20658447900287139 + atof(getenv("VAR49")),
+  -0.21463526115310497 + atof(getenv("VAR50")),
+  0.3759419651858581 + atof(getenv("VAR51")),
+  0.11638267811881861 + atof(getenv("VAR52")),
+  0.10863205991857394 + atof(getenv("VAR53")),
+  0.43562399668899016 + atof(getenv("VAR54")),
+  0.43334850554825344 + atof(getenv("VAR55")),
+  -0.33463842940386973 + atof(getenv("VAR56")),
+  0.16296980122931282 + atof(getenv("VAR57")),
+  0.20159484123662413 + atof(getenv("VAR58")),
+  0.48602902689164251 + atof(getenv("VAR59")),
+  0.6017109787381556 + atof(getenv("VAR60")),
+  0.56864048030870384 + atof(getenv("VAR61")),
+  0.42558863597206059 + atof(getenv("VAR62")),
+  -0.14775369377139841 + atof(getenv("VAR63")),
+  -0.2799205520412994 + atof(getenv("VAR64")),
+  0.1083336186149836 + atof(getenv("VAR65")),
+  0.13159752094720251 + atof(getenv("VAR66")),
+  -0.54441716004060559 + atof(getenv("VAR67")),
+  -0.49251240216835018 + atof(getenv("VAR68")),
+  -0.44019202880894598 + atof(getenv("VAR69")),
+  -0.11885278398283178 + atof(getenv("VAR70")),
+  -0.27474034458276808 + atof(getenv("VAR71")),
+  0.0073270390860471907 + atof(getenv("VAR72")),
+  0.62144060389376699 + atof(getenv("VAR73")),
+  0.0081645993392778782 + atof(getenv("VAR74")),
+  -0.40266668434081909 + atof(getenv("VAR75")),
+  0.3132275617413337 + atof(getenv("VAR76")),
+  -0.18116775837218543 + atof(getenv("VAR77")),
+  0.32745803957522185 + atof(getenv("VAR78")),
+  0.21972655795428858 + atof(getenv("VAR79")),
+  0.16010356917497914 + atof(getenv("VAR80")),
+  -0.10781095858755482 + atof(getenv("VAR81")),
+  0.098712313244843142 + atof(getenv("VAR82")),
+  0.49183163546901321 + atof(getenv("VAR83")),
+  0.043046816418507799 + atof(getenv("VAR84")),
+  0.26837715663279638 + atof(getenv("VAR85")),
+  0.18860545588137367 + atof(getenv("VAR86")),
+  0.39261732900002455 + atof(getenv("VAR87")),
+  -0.2205386321903004 + atof(getenv("VAR88")),
+  0.43311813664571619 + atof(getenv("VAR89")),
+  -0.57097220426739392 + atof(getenv("VAR90")),
+  -0.41358068754010519 + atof(getenv("VAR91")),
+  -0.083301272005444682 + atof(getenv("VAR92")),
+  -0.068751560676636625 + atof(getenv("VAR93")),
+  0.28322124718056474 + atof(getenv("VAR94")),
+  0.6608172886121586 + atof(getenv("VAR95")),
+  0.087256146699057402 + atof(getenv("VAR96")),
+  0.62624261733520104 + atof(getenv("VAR97")),
+  -0.31015953851597367 + atof(getenv("VAR98")),
+  -0.1003264208530085 + atof(getenv("VAR99")),
+  0.56688152412455517 + atof(getenv("VAR100")),
+  -0.025229184484796802 + atof(getenv("VAR101")),
+  -0.38082444786759284 + atof(getenv("VAR102")),
+  0.28689365103959608 + atof(getenv("VAR103")),
+  0.31538949593595905 + atof(getenv("VAR104")),
+  0.01614842742852389 + atof(getenv("VAR105")),
+  0.60323614118618607 + atof(getenv("VAR106")),
+  0.30159120408553308 + atof(getenv("VAR107")),
+  -0.21240252302781892 + atof(getenv("VAR108")),
+  0.077135123768158717 + atof(getenv("VAR109")),
+  -0.12555281188612241 + atof(getenv("VAR110")),
+  -0.012340895362808371 + atof(getenv("VAR111")),
+  -0.10939203720198754 + atof(getenv("VAR112")),
+  0.2184411974776535 + atof(getenv("VAR113")),
+  0.59783917301188683 + atof(getenv("VAR114")),
+  -0.56342677236583616 + atof(getenv("VAR115")),
+  -0.10713591173600961 + atof(getenv("VAR116")),
+  0.38135166743459575 + atof(getenv("VAR117")),
+  -0.3671730029785622 + atof(getenv("VAR118")),
+  -0.32686767978992748 + atof(getenv("VAR119")),
+  0.18855876207526989 + atof(getenv("VAR120")),
+  0.56250646504118418 + atof(getenv("VAR121")),
+  -0.31373699904057945 + atof(getenv("VAR122")),
+  0.36555469025607118 + atof(getenv("VAR123")),
+  0.28150344650956682 + atof(getenv("VAR124")),
+  0.34685573097319711 + atof(getenv("VAR125")),
+  0.11087530050788222 + atof(getenv("VAR126")),
+  0.25093510854802492 + atof(getenv("VAR127")),
+  -0.02964743631535674 + atof(getenv("VAR128")),
+  -0.0040241031554601389 + atof(getenv("VAR129")),
+  -0.77719096779766306 + atof(getenv("VAR130")),
+  -0.27891110372128042 + atof(getenv("VAR131")),
+  0.033718285478398322 + atof(getenv("VAR132")),
+  -0.60580224291790929 + atof(getenv("VAR133")),
+  0.26787184473724945 + atof(getenv("VAR134")),
+  -0.20628088624464769 + atof(getenv("VAR135")),
+  -0.10335511485827394 + atof(getenv("VAR136")),
+  0.040405562080482557 + atof(getenv("VAR137")),
+  0.28158030137058765 + atof(getenv("VAR138")),
+  0.0042437781862204593 + atof(getenv("VAR139")),
+  0.051887307942867777 + atof(getenv("VAR140")),
+  0.10876135404540552 + atof(getenv("VAR141")),
+  -0.027481412012826195 + atof(getenv("VAR142")),
+  -0.26454240150534869 + atof(getenv("VAR143")),
+  0.52285996056245121 + atof(getenv("VAR144")),
+  -0.26696026627064917 + atof(getenv("VAR145")),
+  -0.44817304291409871 + atof(getenv("VAR146")),
+  -0.18864710111567456 + atof(getenv("VAR147")),
+  -0.10886124394596182 + atof(getenv("VAR148")),
+  -0.24136779531619512 + atof(getenv("VAR149")),
+  -0.16992036372126906 + atof(getenv("VAR150")),
+  0.62965130928026447 + atof(getenv("VAR151")),
+  0.7505818003300212 + atof(getenv("VAR152")),
+  -0.39316661169944478 + atof(getenv("VAR153")),
+  0.24887844135439557 + atof(getenv("VAR154")),
+  0.25541113530133935 + atof(getenv("VAR155")),
+  -0.19378190105205223 + atof(getenv("VAR156")),
+  1.3999923246366905 + atof(getenv("VAR157")),
+  0.20724227537512493 + atof(getenv("VAR158")),
+  0.63994187691050175 + atof(getenv("VAR159")),
+  0.345360892836449 + atof(getenv("VAR160")),
+  0.14328569694468601 + atof(getenv("VAR161")),
+  0.06887153555842479 + atof(getenv("VAR162")),
+  0.6138447553104015 + atof(getenv("VAR163")),
+  0.15849114738843245 + atof(getenv("VAR164")),
+  -0.14344393032606353 + atof(getenv("VAR165")),
+  0.54063135101810689 + atof(getenv("VAR166")),
+  0.31386988169817454 + atof(getenv("VAR167")),
+  -0.59327571288974723 + atof(getenv("VAR168")),
+  -0.035603337098825169 + atof(getenv("VAR169")),
+  0.24781360594203977 + atof(getenv("VAR170")),
+  0.34847024679600747 + atof(getenv("VAR171")),
+  0.069422815157051163 + atof(getenv("VAR172")),
+  0.12459971920577267 + atof(getenv("VAR173")),
+  0.060375015241100907 + atof(getenv("VAR174")),
+  0.27007068636456943 + atof(getenv("VAR175")),
+  -0.18552269238067251 + atof(getenv("VAR176")),
+  -0.35072721446995836 + atof(getenv("VAR177")),
+  -0.40304727293515896 + atof(getenv("VAR178")),
+  -0.44997647125649071 + atof(getenv("VAR179")),
+  -0.28953899173390335 + atof(getenv("VAR180")),
+  -0.1651282938872054 + atof(getenv("VAR181")),
+  -0.30659257883935398 + atof(getenv("VAR182")),
+  -0.25126432827353945 + atof(getenv("VAR183")),
+  -0.10875900480990683 + atof(getenv("VAR184")),
+  0.22020146272488156 + atof(getenv("VAR185")),
+  0.4041121701205348 + atof(getenv("VAR186")),
+  -0.10564056189619471 + atof(getenv("VAR187")),
+  -0.28734466324736896 + atof(getenv("VAR188")),
+  0.78945991154014927 + atof(getenv("VAR189")),
+  -0.32977317965898728 + atof(getenv("VAR190")),
+  0.014361251843553358 + atof(getenv("VAR191")),
+  0.35727597041102394 + atof(getenv("VAR192")),
+  -0.72699988185485964 + atof(getenv("VAR193")),
+  -0.59587820200495256 + atof(getenv("VAR194")),
+  0.36462320528552128 + atof(getenv("VAR195")),
+  0.032111167331080825 + atof(getenv("VAR196")),
+  -0.028969082806069593 + atof(getenv("VAR197")),
+  -0.6046233636463817 + atof(getenv("VAR198")),
+  -0.29151138569982271 + atof(getenv("VAR199")),
+  -0.12261494462006561 + atof(getenv("VAR200")),
+  -0.14243293198814527 + atof(getenv("VAR201")),
+  -0.21436198376980353 + atof(getenv("VAR202")),
+  0.72056345425622015 + atof(getenv("VAR203")),
+  0.061301726891453412 + atof(getenv("VAR204")),
+  -0.24627797799367113 + atof(getenv("VAR205")),
+  0.32204694049428811 + atof(getenv("VAR206")),
+  -0.1466957275023375 + atof(getenv("VAR207")),
+  -0.26429657365379916 + atof(getenv("VAR208")),
+  -0.073144650104051231 + atof(getenv("VAR209")),
+  0.082919748173191934 + atof(getenv("VAR210")),
+  -0.050422701601713832 + atof(getenv("VAR211")),
+  0.77008901933837393 + atof(getenv("VAR212")),
+  -0.48142247197178079 + atof(getenv("VAR213")),
+  -0.40702628220251658 + atof(getenv("VAR214")),
+  -0.26701200809633102 + atof(getenv("VAR215")),
+  -0.43536548578001766 + atof(getenv("VAR216")),
+  -0.00036002101386009566 + atof(getenv("VAR217")),
+  0.43340572564932173 + atof(getenv("VAR218")),
+  -0.35129781233102342 + atof(getenv("VAR219")),
+  -0.55458767633435413 + atof(getenv("VAR220")),
+  0.035001731907143001 + atof(getenv("VAR221")),
+  -0.52826179097384851 + atof(getenv("VAR222")),
+  0.99147327476973157 + atof(getenv("VAR223")),
+  -0.7543928839823355 + atof(getenv("VAR224")),
+  0.1578202216328892 + atof(getenv("VAR225")),
+  -0.35630432786728583 + atof(getenv("VAR226")),
+  0.15007331263191256 + atof(getenv("VAR227")),
+  -0.93901021170462751 + atof(getenv("VAR228")),
+  0.54846136094379228 + atof(getenv("VAR229")),
+  0.021021961897339809 + atof(getenv("VAR230")),
+  0.17652361395271679 + atof(getenv("VAR231")),
+  0.19098944386199018 + atof(getenv("VAR232")),
+  -0.56214307884192716 + atof(getenv("VAR233")),
+  -0.34619590237479381 + atof(getenv("VAR234")),
+  0.38485849910215109 + atof(getenv("VAR235")),
+  0.18411740965805837 + atof(getenv("VAR236")),
+  0.45997670796278528 + atof(getenv("VAR237")),
+  -0.17583927327788806 + atof(getenv("VAR238")),
+  -0.48649920069695857 + atof(getenv("VAR239")),
+  0.28460433962513276 + atof(getenv("VAR240")),
+  0.0082369114417856076 + atof(getenv("VAR241")),
+  -0.21965666927956301 + atof(getenv("VAR242")),
+  0.27520127495613345 + atof(getenv("VAR243")),
+  1.0372447399282136 + atof(getenv("VAR244")),
+  -0.22806811593623399 + atof(getenv("VAR245")),
+  -0.77839837461416739 + atof(getenv("VAR246")),
+  -1.096896379745679 + atof(getenv("VAR247")),
+  -0.26046190974664729 + atof(getenv("VAR248")),
+  2.1186302342039949 + atof(getenv("VAR249")),
+  -0.88264720553460574 + atof(getenv("VAR250")),
+  -1.5285883260534083 + atof(getenv("VAR251")),
+  2.4425250635955775 + atof(getenv("VAR252")),
+  0.056020961204742287 + atof(getenv("VAR253")),
+  -1.2744303013410645 + atof(getenv("VAR254")),
+  -1.4332918198668554 + atof(getenv("VAR255")),
+    };
+    for (size_t i = 1; i < kNumRotators; ++i) {
+      float averfreq = sqrt(FreqAve(i - 1) * FreqAve(i));
+      float phase0 = averfreq * advance[i - 1] / kSampleRate;
+      float phase1 = averfreq * advance[i] / kSampleRate;
+      float almost_one = 0.17542041354405974;
+      float f = almost_one * 2 * M_PI * (phase1 - phase0);
+      f += prev_phase;
+      f += phase_array[i];
+      inputphase[0][i] = cos(f);
+      inputphase[1][i] = sin(f);
+      prev_phase = f;
+    }
   }
   void AddAudio(int c, int i, float audio) {
-    channel[c].accu[0][i] += rot[2][i] * audio;
-    channel[c].accu[1][i] += rot[3][i] * audio;
+    float raudio = inputphase[0][i] * audio;
+    float iaudio = inputphase[1][i] * audio;
+    channel[c].accu[0][i] += rot[2][i] * raudio + rot[3][i] * iaudio;
+    channel[c].accu[1][i] += -rot[2][i] * iaudio + rot[3][i] * raudio;
   }
   void OccasionallyRenormalize() {
     for (int i = 0; i < kNumRotators; ++i) {
@@ -225,7 +458,7 @@ struct Rotators {
 		  float &out_of_phase_right) {
     float out_of_phase = 0;
     float q = prev_rightr * prev_leftr + prev_righti * prev_lefti;
-    if (q < 0 && rot_ix >= 30 && rot_ix < 128 ) {
+    if (q < 0 && rot_ix >= 40 && rot_ix < 256 ) {
       float mul = 2.0 * (rot_ix - 44) * (1.0 / 24.0);
       if (mul > 1) {
 	mul = 1;
@@ -244,6 +477,7 @@ struct Rotators {
     out_of_phase_val[1] += window * out_of_phase_val[0];
     out_of_phase_val[2] *= 1 - window;
     out_of_phase_val[2] += window * out_of_phase_val[1];
+    out_of_phase_val[2] = 0;
     out_of_phase_left = out_of_phase_val[2] * (rot[2][rot_ix] * rightr + rot[3][rot_ix] * righti);
     out_of_phase_right = out_of_phase_val[2] * (rot[2][rot_ix] * leftr + rot[3][rot_ix] * lefti);
     leftr *= 1.0 - out_of_phase_val[2];
@@ -270,7 +504,11 @@ struct Rotators {
     right = rot[2][rot_ix] * rightr + rot[3][rot_ix] * righti;
     left = rot[2][rot_ix] * leftr + rot[3][rot_ix] * lefti;
     // center = 0;
-    // center = left = right = 0;
+#if 0
+    if (rot_ix != 44) {
+       center = left = right = 0;
+    }
+#endif
   }
 };
 
@@ -283,7 +521,7 @@ struct RotatorFilterBank {
     rotators_ = new Rotators(num_channels, samplerate);
 
     max_delay_ = rotators_->max_delay_;
-    QCHECK_LE(max_delay_, kBlockSize);
+    QCHECK_LE(max_delay_, kHistorySize);
     fprintf(stderr, "Rotator bank output delay: %zu\n", max_delay_);
   }
   ~RotatorFilterBank() { delete rotators_; }
@@ -396,7 +634,7 @@ void Process(const int output_channels_arg, const double distance_to_interval_ra
   dm.Initialize(output_channels);
   BinauralModel binaural;
   float *btable = GetBinauralTable();
-  constexpr int64_t kNumRotators = 128;
+  constexpr int64_t kNumRotators = 256;
   std::vector<float> filter_gains(kNumRotators);
   for (size_t i = 0; i < kNumRotators; ++i) {
     filter_gains[i] = 0.1; // feels like 1.0 clips occasionally in current config
@@ -416,14 +654,9 @@ void Process(const int output_channels_arg, const double distance_to_interval_ra
     speaker_to_ratio_table.push_back(ExpectedLeftToRightRatio(angle));
   }
 
+  double sum_all_output = 0;
   int64_t total_in = 0;
   bool extend_the_end = true;
-  float speaker_index_array[kNumRotators][3];
-  for (int i = 0; i < 128; ++i) {
-    speaker_index_array[i][0] = 0.5 * (output_channels_arg - 1);
-    speaker_index_array[i][1] = 0.5 * (output_channels_arg - 1);
-    speaker_index_array[i][2] = 0.5 * (output_channels_arg - 1);
-  }
   float out_of_phase_array[kNumRotators][3] = {{0}};
   for (;;) {
     int64_t out_ix = 0;
@@ -433,7 +666,7 @@ void Process(const int output_channels_arg, const double distance_to_interval_ra
       history[2 * (input_ix & kHistoryMask) + 0] = input[2 * i];
       history[2 * (input_ix & kHistoryMask) + 1] = input[2 * i + 1];
     }
-    printf("read %d\n", int(read));
+    // printf("read %d\n", int(read));
     if (read == 0) {
       if (extend_the_end) {
         // Empty the filters and the history.
@@ -467,6 +700,12 @@ void Process(const int output_channels_arg, const double distance_to_interval_ra
       }
       rfb.rotators_->IncrementAll();
       for (int rot = kNumRotators - 1; rot >= 0; --rot) {
+	if (rot == -1) {
+	  for (int z = 0; z < 16; ++z) {
+	    rfb.rotators_->channel[0].accu[z][rot] = 0;
+	    rfb.rotators_->channel[1].accu[z][rot] = 0;
+	  }
+	}
         const float ratio =
 	  ActualLeftToRightRatio(rfb.rotators_->channel[1].LenSqr(rot),
 				 rfb.rotators_->channel[0].LenSqr(rot));
@@ -476,13 +715,6 @@ void Process(const int output_channels_arg, const double distance_to_interval_ra
                               std::greater<>()) -
              speaker_to_ratio_table.begin()) *
             (1.0 / kSubSourcePrecision);
-	speaker_index_array[rot][0] *= 1.0 - rfb.rotators_->window[rot];
-	speaker_index_array[rot][0] += rfb.rotators_->window[rot] * subspeaker_index;
-	speaker_index_array[rot][1] *= 1.0 - rfb.rotators_->window[rot];
-	speaker_index_array[rot][1] += rfb.rotators_->window[rot] * speaker_index_array[rot][0];
-	speaker_index_array[rot][2] *= 1.0 - rfb.rotators_->window[rot];
-	speaker_index_array[rot][2] += rfb.rotators_->window[rot] * speaker_index_array[rot][1];
-	subspeaker_index = speaker_index_array[rot][2];
 	/*
         if (subspeaker_index < 1.0) {
           subspeaker_index = 1.0;
@@ -591,7 +823,7 @@ void Process(const int output_channels_arg, const double distance_to_interval_ra
 	  
 	  int speaker = static_cast<int>(floor(subspeaker_index));
 	  float off = subspeaker_index - speaker;
-
+	  
 	  if (rot < 25) {
 	    output[out_ix * output_channels + 0] += 0.5 * right;
 	    output[out_ix * output_channels + 1] += 0.5 * right;
@@ -638,6 +870,10 @@ void Process(const int output_channels_arg, const double distance_to_interval_ra
 	      output[(out_ix + 1) * output_channels - 1 ] += out_of_phase_right * 0.5;
 	    }
 	  }
+	  for (int hh = 0; hh < output_channels; ++hh) {
+	    float v = output[out_ix * output_channels + hh];
+	    sum_all_output += v * v;
+	  }
         }
       }
       if (total_in + i >= rfb.max_delay_) {
@@ -654,6 +890,7 @@ void Process(const int output_channels_arg, const double distance_to_interval_ra
     std::fill(output.begin(), output.end(), 0.0);
     std::fill(binaural_output.begin(), binaural_output.end(), 0.0);
   }
+  printf("Energy: %.17f\n", 1.0/sum_all_output);
 };
 
 }  // namespace
