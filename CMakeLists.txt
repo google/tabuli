@@ -8,6 +8,7 @@ pkg_check_modules(FFTW3 REQUIRED IMPORTED_TARGET fftw3f)
 find_package(Eigen3 REQUIRED)
 set(ABSL_PROPAGATE_CXX_STD YES)
 add_subdirectory(third_party/absl EXCLUDE_FROM_ALL)
+add_subdirectory(third_party/highway EXCLUDE_FROM_ALL)
 
 add_executable(driver_model driver_model/driver_model.cc)
 target_link_libraries(driver_model PkgConfig::SndFile)
@@ -30,7 +31,7 @@ endforeach ()
 
 
 target_link_libraries(angular PkgConfig::FFTW3)
-target_link_libraries(spectral_diff PkgConfig::FFTW3)
+target_link_libraries(spectral_diff PkgConfig::FFTW3 hwy)
 target_link_libraries(spectrum_similarity PkgConfig::FFTW3)
 target_link_libraries(two_to_three PkgConfig::FFTW3)
 
