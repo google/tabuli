@@ -91,9 +91,9 @@ struct PerChannel {
   // [4..5] is for real and imag of 3rd leaking accumulation
   // etc.
   // [14..15] is for real and imag of the 8th order leaking accumulation
-  double accu[16][kNumRotators] = {0};
+  double accu[8][kNumRotators] = {0};
   double LenSqr(size_t i) {
-    return accu[14][i] * accu[14][i] + accu[15][i] * accu[15][i];
+    return accu[6][i] * accu[6][i] + accu[7][i] * accu[7][i];
   }
 };
 
@@ -101,7 +101,7 @@ double get_gain_lut(int i) {
   static const double gain_lut[256] = {
     1 + atof(getenv("VAR512")),
     1 + atof(getenv("VAR513")),
-    1 + atof(getenv("VAR258")),
+    10.808554960080418 + atof(getenv("VAR258")),
     1 + atof(getenv("VAR259")),
     1 + atof(getenv("VAR260")),
     1 + atof(getenv("VAR261")),
@@ -359,8 +359,6 @@ double get_gain_lut(int i) {
   return abs(gain_lut[i]) * 0.99 + 0.01;
 }
 
-static double g_entropy = 0;
-
 struct Rotators {
   // Four arrays of rotators.
   // [0..1] is real and imag for rotation speed
@@ -380,14 +378,20 @@ struct Rotators {
   int16_t max_delay_ = 0;
 
 
-  int FindMedian3xLeaker(float window) {
+  int FindMedian3xLeaker(double window) {
     // Approximate filter delay.
     // static const double kMagic = 4.993680535570288; // 47370.85036251393
     // static const double kMagic = 5.002;  // 47345.26851666388
     // static const double kMagic = 5.012; // 47352.448694138846,
-     static const double kMagic = 5.012;
+    // static const double kMagic = 2.75;  // 3.7552033199e-07
+    // static const double kMagic = 2.85;  // 3.824753322e-07
+    // static const double kMagic = 2.65;  // 3.8468165241e-07
+    // static const double kMagic = 2.76; // 3.7532833173e-07
+    // static const double kMagic = 2.765; // 3.7546202344e-07,
+    static const double kMagic = 2.7562587531505258 + 0.0001 * atof(getenv("VAR256"));
     
-    return kMagic / window;
+    static const double kRound = 0.0036029491102758291 + 0.01 * atof(getenv("VAR257"));
+    return int(kMagic / window + kRound);
   }
 
   Rotators() {}
@@ -396,8 +400,8 @@ struct Rotators {
     static const float kSampleRate = 48000.0;
     static const float kHzToRad = 2.0f * M_PI / kSampleRate;
     //    static const double kWindow = 0.9988311560491858
-    //    static const double kWindow = 0.9995; // 72129.93163818851 (0.9996)->
-    static const double kWindow = 0.9996;  // 47352.448694138846
+    static const double kWindow = 0.9996; // 72129.93163818851 (0.9996)->60697->
+    //    static const double kWindow = 0.9996;  // 47352.448694138846
     // static const double kWindow = 0.99963;
     for (int i = 0; i < kNumRotators; ++i) {
       float bandwidth = CalculateBandwidthInHz(i);  // bandwidth per bucket.
@@ -407,279 +411,277 @@ struct Rotators {
       float windowM1 = 1.0f - window[i];
       max_delay_ = std::max(max_delay_, delay[i]);
       const float f = FreqAve(i) * kHzToRad;
-      gain[i] = pow(windowM1, 4.0); // * (i + 10) / 256.0;
+      gain[i] = pow(windowM1, 2.0); // * (i + 10) / 256.0;
       gain[i] *= get_gain_lut(i);
-      //      gain[i] *= sqrt(bandwidth / 300.0);
-      if (i != 0) {
-	double v = get_gain_lut(i) - get_gain_lut(i - 1);
-	g_entropy += abs(v);
+      if (i < 7) {
+	gain[i] *= 0.5 + 0.5 * (7 - i) / 7.0;
       }
-      g_entropy += abs(get_gain_lut(i) - 1.0);
+      //      gain[i] *= sqrt(bandwidth / 300.0);
       rot[0][i] = float(std::cos(f));
       rot[1][i] = float(-std::sin(f));
       rot[2][i] = gain[i];
       rot[3][i] = 0.0f;
     }
     for (size_t i = 0; i < kNumRotators; ++i) {
-      advance[i] = 1 + max_delay_ - delay[i];
+      advance[i] = max_delay_ - delay[i];
     }
     static const double phase_array[256] = {
--7.4726475930030078 + atof(getenv("VAR0")),
-1.0021584759147275 + atof(getenv("VAR1")),
-3.6241521329593964 + atof(getenv("VAR2")),
--0.061853566198248423 + atof(getenv("VAR3")),
--3.7859100100865817 + atof(getenv("VAR4")),
--0.57646680900036629 + atof(getenv("VAR5")),
--4.6576487522346675 + atof(getenv("VAR6")),
--2.7913313961296549 + atof(getenv("VAR7")),
--0.99910433636684259 + atof(getenv("VAR8")),
-1.2948516226989524 + atof(getenv("VAR9")),
-9.1809882092728952 + atof(getenv("VAR10")),
-10.977172774962252 + atof(getenv("VAR11")),
--0.061224286658221806 + atof(getenv("VAR12")),
-2.1606847411373833 + atof(getenv("VAR13")),
-10.839421895489064 + atof(getenv("VAR14")),
-13.300934818151559 + atof(getenv("VAR15")),
--8.8846602331392148 + atof(getenv("VAR16")),
--12.681262779555814 + atof(getenv("VAR17")),
--3.2961578271404921 + atof(getenv("VAR18")),
--2.2056264997870518 + atof(getenv("VAR19")),
-11.745262257900732 + atof(getenv("VAR20")),
-0.90772475591836399 + atof(getenv("VAR21")),
--9.2065702226192183 + atof(getenv("VAR22")),
-11.969470230764603 + atof(getenv("VAR23")),
--3.885090325930209 + atof(getenv("VAR24")),
--2.6906974117775024 + atof(getenv("VAR25")),
-11.62514783079282 + atof(getenv("VAR26")),
-2.2638081394554437 + atof(getenv("VAR27")),
--2.2567333234304061 + atof(getenv("VAR28")),
-15.054462454258307 + atof(getenv("VAR29")),
-5.7228141622783664 + atof(getenv("VAR30")),
--1.7615016798937804 + atof(getenv("VAR31")),
-8.6566662449335361 + atof(getenv("VAR32")),
-5.1683537282777241 + atof(getenv("VAR33")),
-2.363841707783803 + atof(getenv("VAR34")),
-4.6325430088111572 + atof(getenv("VAR35")),
-1.064023000807748 + atof(getenv("VAR36")),
--1.44432670102756 + atof(getenv("VAR37")),
--12.226861876138761 + atof(getenv("VAR38")),
--7.545363586850808 + atof(getenv("VAR39")),
-8.5526104138569696 + atof(getenv("VAR40")),
--0.17872238838335083 + atof(getenv("VAR41")),
-6.9451503520391045 + atof(getenv("VAR42")),
-2.3375612566472248 + atof(getenv("VAR43")),
--1.5148797576950941 + atof(getenv("VAR44")),
-1.3323237949103526 + atof(getenv("VAR45")),
--2.701522111926054 + atof(getenv("VAR46")),
--0.62746314338971221 + atof(getenv("VAR47")),
-1.1996592712147691 + atof(getenv("VAR48")),
--5.0335908771554969 + atof(getenv("VAR49")),
-1.1259169252535211 + atof(getenv("VAR50")),
-18.757247730972498 + atof(getenv("VAR51")),
--1.5706436130267061 + atof(getenv("VAR52")),
-4.0737190019314165 + atof(getenv("VAR53")),
--21.542289506773187 + atof(getenv("VAR54")),
-2.7604497427041124 + atof(getenv("VAR55")),
--4.4521294630615857 + atof(getenv("VAR56")),
-18.47727809998478 + atof(getenv("VAR57")),
-11.162755894650356 + atof(getenv("VAR58")),
-3.4517032397566805 + atof(getenv("VAR59")),
--3.7593437627001345 + atof(getenv("VAR60")),
--5.6924496663202859 + atof(getenv("VAR61")),
--1.8839467139193984 + atof(getenv("VAR62")),
-0.86479201112907822 + atof(getenv("VAR63")),
--2.070518414484233 + atof(getenv("VAR64")),
--3.4002729008058061 + atof(getenv("VAR65")),
-1.8461736054731677 + atof(getenv("VAR66")),
-3.8746804417839309 + atof(getenv("VAR67")),
-27.77305957867928 + atof(getenv("VAR68")),
-1.0196408667942736 + atof(getenv("VAR69")),
-1.8467492393519513 + atof(getenv("VAR70")),
-0.92345284442345177 + atof(getenv("VAR71")),
-16.000293838805295 + atof(getenv("VAR72")),
-7.2151917016043576 + atof(getenv("VAR73")),
--6.4529835785659326 + atof(getenv("VAR74")),
--1.8255497970953012 + atof(getenv("VAR75")),
-3.581361741089776 + atof(getenv("VAR76")),
-33.931215229739038 + atof(getenv("VAR77")),
-25.130197703893455 + atof(getenv("VAR78")),
-6.0128056278437638 + atof(getenv("VAR79")),
-12.373524433204576 + atof(getenv("VAR80")),
--6.051005688822289 + atof(getenv("VAR81")),
-18.315134258402399 + atof(getenv("VAR82")),
--3.1329820374428401 + atof(getenv("VAR83")),
-8.0024362070404056 + atof(getenv("VAR84")),
-5.8735380129706423 + atof(getenv("VAR85")),
-6.6869590698920787 + atof(getenv("VAR86")),
-0.050675296744813261 + atof(getenv("VAR87")),
--20.920986385366771 + atof(getenv("VAR88")),
--2.4060204594142554 + atof(getenv("VAR89")),
--4.2537930460875284 + atof(getenv("VAR90")),
-7.0112238817143915 + atof(getenv("VAR91")),
--15.702464412185403 + atof(getenv("VAR92")),
--19.716905218399592 + atof(getenv("VAR93")),
-11.519885320577741 + atof(getenv("VAR94")),
--15.52999100285542 + atof(getenv("VAR95")),
--4.8926356618248708 + atof(getenv("VAR96")),
-11.126363995061562 + atof(getenv("VAR97")),
-3.5936572014036767 + atof(getenv("VAR98")),
--16.472461590987709 + atof(getenv("VAR99")),
--13.465782931772024 + atof(getenv("VAR100")),
--7.8239926938894131 + atof(getenv("VAR101")),
-0.55645364052419932 + atof(getenv("VAR102")),
--6.0389963454152467 + atof(getenv("VAR103")),
--1.3459247412636817 + atof(getenv("VAR104")),
--1.666831344056648 + atof(getenv("VAR105")),
--3.2048253401915319 + atof(getenv("VAR106")),
-8.7626016132829516 + atof(getenv("VAR107")),
-0.21476576127937363 + atof(getenv("VAR108")),
-0.11786745723267904 + atof(getenv("VAR109")),
-12.869981746227555 + atof(getenv("VAR110")),
--9.2433067063626932 + atof(getenv("VAR111")),
--4.605871134160374 + atof(getenv("VAR112")),
-1.1096329521709707 + atof(getenv("VAR113")),
--0.56377456571782247 + atof(getenv("VAR114")),
--21.485141094670688 + atof(getenv("VAR115")),
-1.7088943270375609 + atof(getenv("VAR116")),
--12.738418477207508 + atof(getenv("VAR117")),
-9.9536320476745033 + atof(getenv("VAR118")),
--3.4553186569875134 + atof(getenv("VAR119")),
--4.8622930969539029 + atof(getenv("VAR120")),
--9.7347136501670501 + atof(getenv("VAR121")),
--3.1651366389085629 + atof(getenv("VAR122")),
-9.8637690452616411 + atof(getenv("VAR123")),
--9.8910268168455442 + atof(getenv("VAR124")),
--3.7467475230079632 + atof(getenv("VAR125")),
--4.8197034427480352 + atof(getenv("VAR126")),
--4.5059628544214503 + atof(getenv("VAR127")),
--0.84684024124733626 + atof(getenv("VAR128")),
-5.0095934683965231 + atof(getenv("VAR129")),
--11.055842551455498 + atof(getenv("VAR130")),
--32.358833060965743 + atof(getenv("VAR131")),
-16.303425900551886 + atof(getenv("VAR132")),
-14.530736570942723 + atof(getenv("VAR133")),
--30.807379721505484 + atof(getenv("VAR134")),
-6.2123337982431455 + atof(getenv("VAR135")),
-13.45203627450134 + atof(getenv("VAR136")),
-9.8395716809193523 + atof(getenv("VAR137")),
-1.6002591169325195 + atof(getenv("VAR138")),
-26.417633697425654 + atof(getenv("VAR139")),
--6.4478241341914613 + atof(getenv("VAR140")),
-5.5876538609800201 + atof(getenv("VAR141")),
-5.6609435666943044 + atof(getenv("VAR142")),
--27.759737246115989 + atof(getenv("VAR143")),
--10.90740529528979 + atof(getenv("VAR144")),
-12.370084009886753 + atof(getenv("VAR145")),
-9.5514379236625917 + atof(getenv("VAR146")),
-15.830255336696228 + atof(getenv("VAR147")),
-1.0375738330927706 + atof(getenv("VAR148")),
-3.3724142922688904 + atof(getenv("VAR149")),
--10.602997240379281 + atof(getenv("VAR150")),
-5.7837877366751309 + atof(getenv("VAR151")),
--1.2739129206022404 + atof(getenv("VAR152")),
--6.0848703797983683 + atof(getenv("VAR153")),
-8.6421411402093256 + atof(getenv("VAR154")),
-10.815090571180619 + atof(getenv("VAR155")),
-4.852058333876192 + atof(getenv("VAR156")),
-10.445012774094922 + atof(getenv("VAR157")),
-4.0844121310585608 + atof(getenv("VAR158")),
--46.735211344214186 + atof(getenv("VAR159")),
-9.9554671488506621 + atof(getenv("VAR160")),
--5.490062004458709 + atof(getenv("VAR161")),
--7.6160472611099372 + atof(getenv("VAR162")),
--1.6303792884047947 + atof(getenv("VAR163")),
--1.1487835169827108 + atof(getenv("VAR164")),
--1.6819756459851927 + atof(getenv("VAR165")),
--20.903154121544983 + atof(getenv("VAR166")),
--0.77920445237487335 + atof(getenv("VAR167")),
--1.7211877635116632 + atof(getenv("VAR168")),
-5.6636197335473986 + atof(getenv("VAR169")),
-5.3122063980205905 + atof(getenv("VAR170")),
-5.5669104172333359 + atof(getenv("VAR171")),
--6.0377150974570579 + atof(getenv("VAR172")),
-5.366921358967657 + atof(getenv("VAR173")),
--9.4865192810680146 + atof(getenv("VAR174")),
-14.064530735567658 + atof(getenv("VAR175")),
-5.6885891639997261 + atof(getenv("VAR176")),
--14.141774022485022 + atof(getenv("VAR177")),
-26.933227895463425 + atof(getenv("VAR178")),
--2.3301295880775648 + atof(getenv("VAR179")),
--19.772718614065759 + atof(getenv("VAR180")),
--1.0534786588420595 + atof(getenv("VAR181")),
--7.4781782271309147 + atof(getenv("VAR182")),
-11.600391307321052 + atof(getenv("VAR183")),
--19.779003345150432 + atof(getenv("VAR184")),
--0.66976184560400676 + atof(getenv("VAR185")),
-0.34646631270785266 + atof(getenv("VAR186")),
-0.24115056161338391 + atof(getenv("VAR187")),
--12.088867166635524 + atof(getenv("VAR188")),
--12.808211591545119 + atof(getenv("VAR189")),
-12.855220327453566 + atof(getenv("VAR190")),
-2.6267156569755614 + atof(getenv("VAR191")),
--4.3458350179700194 + atof(getenv("VAR192")),
--5.7224153551807504 + atof(getenv("VAR193")),
--30.202914506949327 + atof(getenv("VAR194")),
-1.5383281551248278 + atof(getenv("VAR195")),
--5.5405337856878711 + atof(getenv("VAR196")),
-12.086817176840491 + atof(getenv("VAR197")),
-9.1832074887203881 + atof(getenv("VAR198")),
-7.0915856938721209 + atof(getenv("VAR199")),
-21.415669960135677 + atof(getenv("VAR200")),
--4.1428859585018243 + atof(getenv("VAR201")),
-8.1385339700567538 + atof(getenv("VAR202")),
-1.6227145450951597 + atof(getenv("VAR203")),
-4.3316475373416239 + atof(getenv("VAR204")),
--2.8851380806777298 + atof(getenv("VAR205")),
-19.982284412672705 + atof(getenv("VAR206")),
--19.254591772292706 + atof(getenv("VAR207")),
-4.9512486871466468 + atof(getenv("VAR208")),
--8.7746023698061091 + atof(getenv("VAR209")),
--2.8087037199701053 + atof(getenv("VAR210")),
-20.968374199134317 + atof(getenv("VAR211")),
--0.66701669038880218 + atof(getenv("VAR212")),
--9.5332290837487825 + atof(getenv("VAR213")),
-21.822899311253828 + atof(getenv("VAR214")),
-8.2848198369656334 + atof(getenv("VAR215")),
-0.78711223543200459 + atof(getenv("VAR216")),
--1.7197261168095395 + atof(getenv("VAR217")),
--64.15709416956129 + atof(getenv("VAR218")),
-2.6548719718005094 + atof(getenv("VAR219")),
-1.3708211949989444 + atof(getenv("VAR220")),
--11.016067058483451 + atof(getenv("VAR221")),
--12.47707180625757 + atof(getenv("VAR222")),
--3.1812969435927743 + atof(getenv("VAR223")),
--11.310616029262096 + atof(getenv("VAR224")),
-2.8267102888557338 + atof(getenv("VAR225")),
-1.0980478864522774 + atof(getenv("VAR226")),
--8.0123738234698436 + atof(getenv("VAR227")),
-0.23848952385501879 + atof(getenv("VAR228")),
--4.5963395070654149 + atof(getenv("VAR229")),
--3.1661243597913602 + atof(getenv("VAR230")),
-16.479076707400509 + atof(getenv("VAR231")),
-4.697965370245818 + atof(getenv("VAR232")),
-11.669758230332878 + atof(getenv("VAR233")),
-12.864651612118163 + atof(getenv("VAR234")),
-1.4446252055531246 + atof(getenv("VAR235")),
--3.0575234337140347 + atof(getenv("VAR236")),
--5.166206933483168 + atof(getenv("VAR237")),
--8.8990001774737042 + atof(getenv("VAR238")),
-1.0764196366795762 + atof(getenv("VAR239")),
-6.8724677580288525 + atof(getenv("VAR240")),
-16.834069129018143 + atof(getenv("VAR241")),
--1.8593030247130402 + atof(getenv("VAR242")),
--2.803022008923 + atof(getenv("VAR243")),
-8.1288395418326473 + atof(getenv("VAR244")),
-3.7637065054841323 + atof(getenv("VAR245")),
-6.8647609926887494 + atof(getenv("VAR246")),
--14.165943242035478 + atof(getenv("VAR247")),
-13.634857212909314 + atof(getenv("VAR248")),
-6.5557451449106789 + atof(getenv("VAR249")),
--8.9930178538507803 + atof(getenv("VAR250")),
--9.5201064099243506 + atof(getenv("VAR251")),
-6.0271006816280801 + atof(getenv("VAR252")),
-0.065781060063157204 + atof(getenv("VAR253")),
-1.4998106165625069 + atof(getenv("VAR254")),
-0.66971656907554744 + atof(getenv("VAR255")),
+-4.2227599918643151 + atof(getenv("VAR0")),
+-0.42892549931957469 + atof(getenv("VAR1")),
+1.963941062652895 + atof(getenv("VAR2")),
+3.594637304796505 + atof(getenv("VAR3")),
+-0.60219947119311079 + atof(getenv("VAR4")),
+0.55752725744840725 + atof(getenv("VAR5")),
+-6.1479490192084603 + atof(getenv("VAR6")),
+0.61482415175601501 + atof(getenv("VAR7")),
+3.1889597186278538 + atof(getenv("VAR8")),
+-0.37393535287952395 + atof(getenv("VAR9")),
+14.407694471140413 + atof(getenv("VAR10")),
+16.679464161413911 + atof(getenv("VAR11")),
+6.4102261111146053 + atof(getenv("VAR12")),
+2.2112781204208023 + atof(getenv("VAR13")),
+16.893884954921138 + atof(getenv("VAR14")),
+19.158110977249397 + atof(getenv("VAR15")),
+2.4817799476194722 + atof(getenv("VAR16")),
+-7.7934529729276871 + atof(getenv("VAR17")),
+-5.3094989655973626 + atof(getenv("VAR18")),
+3.1524272207851447 + atof(getenv("VAR19")),
+11.649481311892432 + atof(getenv("VAR20")),
+7.1336569832425418 + atof(getenv("VAR21")),
+-3.5607880003396155 + atof(getenv("VAR22")),
+11.087677241709521 + atof(getenv("VAR23")),
+0.66051749349127409 + atof(getenv("VAR24")),
+-3.6979540262356196 + atof(getenv("VAR25")),
+10.766261757661372 + atof(getenv("VAR26")),
+0.27913122895809539 + atof(getenv("VAR27")),
+2.4102353770307854 + atof(getenv("VAR28")),
+10.621836361636955 + atof(getenv("VAR29")),
+6.2500891263085361 + atof(getenv("VAR30")),
+1.7812168485331044 + atof(getenv("VAR31")),
+10.059999538861966 + atof(getenv("VAR32")),
+12.083627923971378 + atof(getenv("VAR33")),
+7.6317031410954623 + atof(getenv("VAR34")),
+9.2879006472972492 + atof(getenv("VAR35")),
+4.7850143918207513 + atof(getenv("VAR36")),
+0.074384831090404099 + atof(getenv("VAR37")),
+-16.728011061319251 + atof(getenv("VAR38")),
+-8.4072038572968388 + atof(getenv("VAR39")),
+12.255612967722417 + atof(getenv("VAR40")),
+1.9274689351199328 + atof(getenv("VAR41")),
+4.3279672479969618 + atof(getenv("VAR42")),
+0.46691087482477284 + atof(getenv("VAR43")),
+-4.1652097701693434 + atof(getenv("VAR44")),
+4.065211137554031 + atof(getenv("VAR45")),
+2.3766138197952462 + atof(getenv("VAR46")),
+0.74108287166955344 + atof(getenv("VAR47")),
+1.0301945353047031 + atof(getenv("VAR48")),
+1.752683547386251 + atof(getenv("VAR49")),
+2.6317204281956164 + atof(getenv("VAR50")),
+16.232611729041558 + atof(getenv("VAR51")),
+-1.7652280693818005 + atof(getenv("VAR52")),
+11.408481129082276 + atof(getenv("VAR53")),
+-19.61802944943166 + atof(getenv("VAR54")),
+-0.2692184572740689 + atof(getenv("VAR55")),
+0.6505704024669926 + atof(getenv("VAR56")),
+20.134188654436279 + atof(getenv("VAR57")),
+14.508291734710628 + atof(getenv("VAR58")),
+-3.9020767242659371 + atof(getenv("VAR59")),
+-3.181204869409727 + atof(getenv("VAR60")),
+-2.5541025370928585 + atof(getenv("VAR61")),
+4.1485804342811603 + atof(getenv("VAR62")),
+-1.8204084514212906 + atof(getenv("VAR63")),
+-2.4081640020529829 + atof(getenv("VAR64")),
+-2.3076325641527431 + atof(getenv("VAR65")),
+-1.8834174081306454 + atof(getenv("VAR66")),
+4.954476382064585 + atof(getenv("VAR67")),
+30.910714212669362 + atof(getenv("VAR68")),
+0.74773217439174178 + atof(getenv("VAR69")),
+1.8575148257548713 + atof(getenv("VAR70")),
+2.6512661259229175 + atof(getenv("VAR71")),
+15.50106703327976 + atof(getenv("VAR72")),
+3.1586815224662299 + atof(getenv("VAR73")),
+-2.7786873456750474 + atof(getenv("VAR74")),
+-2.6318540997649666 + atof(getenv("VAR75")),
+4.2307357362603266 + atof(getenv("VAR76")),
+35.798477674520626 + atof(getenv("VAR77")),
+29.372555314094328 + atof(getenv("VAR78")),
+4.4875624447612363 + atof(getenv("VAR79")),
+10.851143435248316 + atof(getenv("VAR80")),
+-1.6895774360380158 + atof(getenv("VAR81")),
+11.04332761562968 + atof(getenv("VAR82")),
+-7.7939937052292363 + atof(getenv("VAR83")),
+11.193959306357614 + atof(getenv("VAR84")),
+11.042348410853297 + atof(getenv("VAR85")),
+10.734913006952389 + atof(getenv("VAR86")),
+-1.9123456843328304 + atof(getenv("VAR87")),
+-20.397425005680098 + atof(getenv("VAR88")),
+-0.82013470897823337 + atof(getenv("VAR89")),
+-6.118751739788121 + atof(getenv("VAR90")),
+1.0558809782808836 + atof(getenv("VAR91")),
+-17.352667560982429 + atof(getenv("VAR92")),
+-16.933225237106992 + atof(getenv("VAR93")),
+9.0086424508381135 + atof(getenv("VAR94")),
+-15.901390272332328 + atof(getenv("VAR95")),
+-3.0635474285754412 + atof(getenv("VAR96")),
+9.9520154432676637 + atof(getenv("VAR97")),
+4.3123188419839202 + atof(getenv("VAR98")),
+-13.992746919952651 + atof(getenv("VAR99")),
+-19.492211047552161 + atof(getenv("VAR100")),
+-6.7110484983465399 + atof(getenv("VAR101")),
+5.7376863152510378 + atof(getenv("VAR102")),
+-6.4700346517056415 + atof(getenv("VAR103")),
+0.18754170142287738 + atof(getenv("VAR104")),
+-5.4691621543759652 + atof(getenv("VAR105")),
+1.2790791465512314 + atof(getenv("VAR106")),
+8.3936095492199296 + atof(getenv("VAR107")),
+2.752021909540884 + atof(getenv("VAR108")),
+3.4200315432744106 + atof(getenv("VAR109")),
+16.264071682088542 + atof(getenv("VAR110")),
+-8.726393729492214 + atof(getenv("VAR111")),
+-2.1220247325923194 + atof(getenv("VAR112")),
+4.2333910878516052 + atof(getenv("VAR113")),
+4.3094397103046678 + atof(getenv("VAR114")),
+-20.637359000106482 + atof(getenv("VAR115")),
+4.7483428181203253 + atof(getenv("VAR116")),
+-7.8780938373983291 + atof(getenv("VAR117")),
+11.099574173515196 + atof(getenv("VAR118")),
+-1.3179260084232236 + atof(getenv("VAR119")),
+-7.1309987044472694 + atof(getenv("VAR120")),
+-6.8155886523757117 + atof(getenv("VAR121")),
+-0.25501137454898704 + atof(getenv("VAR122")),
+12.777215776353112 + atof(getenv("VAR123")),
+-11.510624582521558 + atof(getenv("VAR124")),
+-4.5454189661965119 + atof(getenv("VAR125")),
+-3.9270309720081591 + atof(getenv("VAR126")),
+-3.7363294019833035 + atof(getenv("VAR127")),
+-3.4849917211982122 + atof(getenv("VAR128")),
+3.0161904131957025 + atof(getenv("VAR129")),
+-9.6107496593123241 + atof(getenv("VAR130")),
+-34.619063464179291 + atof(getenv("VAR131")),
+21.943052270738686 + atof(getenv("VAR132")),
+15.853441623999931 + atof(getenv("VAR133")),
+-27.870461829551221 + atof(getenv("VAR134")),
+9.6364884570940106 + atof(getenv("VAR135")),
+16.193823989450095 + atof(getenv("VAR136")),
+16.160620717116515 + atof(getenv("VAR137")),
+3.3435000401201078 + atof(getenv("VAR138")),
+28.497957090960305 + atof(getenv("VAR139")),
+-2.7791904265624177 + atof(getenv("VAR140")),
+3.49999487500736 + atof(getenv("VAR141")),
+3.4349040015383125 + atof(getenv("VAR142")),
+-21.828463529275318 + atof(getenv("VAR143")),
+-9.308145755866116 + atof(getenv("VAR144")),
+9.6776462420211953 + atof(getenv("VAR145")),
+9.3997329802926668 + atof(getenv("VAR146")),
+15.760129550816764 + atof(getenv("VAR147")),
+-3.0232406421994509 + atof(getenv("VAR148")),
+-2.9466379856399603 + atof(getenv("VAR149")),
+-15.616237250256177 + atof(getenv("VAR150")),
+3.5830719153363759 + atof(getenv("VAR151")),
+3.5569707682707867 + atof(getenv("VAR152")),
+-2.657997234515836 + atof(getenv("VAR153")),
+9.5459454076196106 + atof(getenv("VAR154")),
+16.14861277813273 + atof(getenv("VAR155")),
+9.9350549911974877 + atof(getenv("VAR156")),
+9.9516622453995591 + atof(getenv("VAR157")),
+3.6079157772361858 + atof(getenv("VAR158")),
+-46.580152391459649 + atof(getenv("VAR159")),
+10.451187012055946 + atof(getenv("VAR160")),
+-2.3665659930857954 + atof(getenv("VAR161")),
+-2.6909716818578504 + atof(getenv("VAR162")),
+-2.4107699832366452 + atof(getenv("VAR163")),
+-2.4597554268024382 + atof(getenv("VAR164")),
+-2.8797192582686764 + atof(getenv("VAR165")),
+-15.292810664063653 + atof(getenv("VAR166")),
+-2.6539050061919145 + atof(getenv("VAR167")),
+-9.0240759521945133 + atof(getenv("VAR168")),
+9.8568616622153531 + atof(getenv("VAR169")),
+9.8977408621408767 + atof(getenv("VAR170")),
+3.483771223974911 + atof(getenv("VAR171")),
+-2.5453453324393718 + atof(getenv("VAR172")),
+3.6727220183896803 + atof(getenv("VAR173")),
+-9.1072215131842942 + atof(getenv("VAR174")),
+16.196116521533671 + atof(getenv("VAR175")),
+9.5143138681541508 + atof(getenv("VAR176")),
+-15.091379371660123 + atof(getenv("VAR177")),
+22.81275820441865 + atof(getenv("VAR178")),
+-3.0405121777231412 + atof(getenv("VAR179")),
+-15.349336591524676 + atof(getenv("VAR180")),
+-2.5577140109736343 + atof(getenv("VAR181")),
+-8.7933861650714888 + atof(getenv("VAR182")),
+10.029786709211931 + atof(getenv("VAR183")),
+-21.410594229755194 + atof(getenv("VAR184")),
+-2.6339587098952899 + atof(getenv("VAR185")),
+3.5565246356015505 + atof(getenv("VAR186")),
+-2.7902660649982627 + atof(getenv("VAR187")),
+-9.5262991459378838 + atof(getenv("VAR188")),
+-14.997931741080977 + atof(getenv("VAR189")),
+16.261478396022707 + atof(getenv("VAR190")),
+3.2539863134293654 + atof(getenv("VAR191")),
+-2.393324958438888 + atof(getenv("VAR192")),
+-2.7849486452962129 + atof(getenv("VAR193")),
+-27.182371226950476 + atof(getenv("VAR194")),
+3.507129754318091 + atof(getenv("VAR195")),
+-2.1963531527661972 + atof(getenv("VAR196")),
+9.764054818953074 + atof(getenv("VAR197")),
+10.323708529889712 + atof(getenv("VAR198")),
+3.1323722732250361 + atof(getenv("VAR199")),
+22.397915627237889 + atof(getenv("VAR200")),
+3.910177846992609 + atof(getenv("VAR201")),
+10.575594064832249 + atof(getenv("VAR202")),
+3.2506386094125119 + atof(getenv("VAR203")),
+9.856581223007149 + atof(getenv("VAR204")),
+-2.5703219150177405 + atof(getenv("VAR205")),
+22.770432194151002 + atof(getenv("VAR206")),
+-14.625388854040969 + atof(getenv("VAR207")),
+4.3871329908319261 + atof(getenv("VAR208")),
+-8.0467276351983124 + atof(getenv("VAR209")),
+-1.732466708674139 + atof(getenv("VAR210")),
+23.486177902642396 + atof(getenv("VAR211")),
+-1.6152347831697984 + atof(getenv("VAR212")),
+-7.9767652644925509 + atof(getenv("VAR213")),
+23.240264815442789 + atof(getenv("VAR214")),
+4.2273320360754552 + atof(getenv("VAR215")),
+-2.1990351598516993 + atof(getenv("VAR216")),
+-2.4892763847064372 + atof(getenv("VAR217")),
+-65.722951147360533 + atof(getenv("VAR218")),
+11.56056956798496 + atof(getenv("VAR219")),
+-1.369981227076589 + atof(getenv("VAR220")),
+-8.2997716024585966 + atof(getenv("VAR221")),
+-15.14340598228196 + atof(getenv("VAR222")),
+-0.63945286495116549 + atof(getenv("VAR223")),
+-13.868182658153399 + atof(getenv("VAR224")),
+-2.0152217481341443 + atof(getenv("VAR225")),
+6.2786289955564625 + atof(getenv("VAR226")),
+-7.0978238244392342 + atof(getenv("VAR227")),
+-2.3379004622615911 + atof(getenv("VAR228")),
+-1.8101005949245461 + atof(getenv("VAR229")),
+-3.8875237085847227 + atof(getenv("VAR230")),
+18.201699548844054 + atof(getenv("VAR231")),
+6.776320285599347 + atof(getenv("VAR232")),
+9.5927132232684933 + atof(getenv("VAR233")),
+16.439929425923378 + atof(getenv("VAR234")),
+1.1579228038383174 + atof(getenv("VAR235")),
+-3.5252725833610996 + atof(getenv("VAR236")),
+1.2279457190228977 + atof(getenv("VAR237")),
+-9.3528729882752639 + atof(getenv("VAR238")),
+7.6620091957053056 + atof(getenv("VAR239")),
+9.5550703492032696 + atof(getenv("VAR240")),
+20.031059096642053 + atof(getenv("VAR241")),
+-3.2304747970132635 + atof(getenv("VAR242")),
+-5.5003727469258088 + atof(getenv("VAR243")),
+8.9400179442692274 + atof(getenv("VAR244")),
+4.5632511215140124 + atof(getenv("VAR245")),
+1.9890778271283305 + atof(getenv("VAR246")),
+-2.3788907123392256 + atof(getenv("VAR247")),
+19.863230753376769 + atof(getenv("VAR248")),
+9.0888131193771375 + atof(getenv("VAR249")),
+-7.865810198532615 + atof(getenv("VAR250")),
+-4.8734977544793923 + atof(getenv("VAR251")),
+9.4408957606174386 + atof(getenv("VAR252")),
+5.0161776481718361 + atof(getenv("VAR253")),
+7.6308628411488533 + atof(getenv("VAR254")),
+9.1494365252168457 + atof(getenv("VAR255")),
     };
     for (size_t i = 0; i < kNumRotators; ++i) {
       float f = phase_array[i];
@@ -705,13 +707,13 @@ struct Rotators {
     for (int c = 0; c < channel.size(); ++c) {
       for (int i = 0; i < kNumRotators; i++) {  // clang simdifies this.
 	const float w = window[i];
-	for (int k = 2; k < 16; ++k) {
+	for (int k = 2; k < 8; ++k) {
 	  channel[c].accu[k][i] += channel[c].accu[k - 2][i];
 	}
 	const float a = rot[2][i], b = rot[3][i];
 	rot[2][i] = rot[0][i] * a - rot[1][i] * b;
 	rot[3][i] = rot[0][i] * b + rot[1][i] * a;
-	for (int k = 0; k < 16; ++k) channel[c].accu[k][i] *= w;
+	for (int k = 0; k < 8; ++k) channel[c].accu[k][i] *= w;
       }
     }
   }
@@ -736,23 +738,20 @@ struct Rotators {
 	mul = 0;
       }
       out_of_phase = mul * -q / (0.5 * (((prev_rightr * prev_rightr + prev_righti * prev_righti) + (prev_leftr * prev_leftr + prev_lefti * prev_lefti))));
-      out_of_phase *= (1.0 / window);
-      out_of_phase *= (1.0 / window);
-      out_of_phase *= (1.0 / window);
+      if (out_of_phase >= 0.25) {
+	out_of_phase = 0.25;
+      }
+      out_of_phase_val[0] /= (1.0 - window);
+      out_of_phase_val[0] = 0.0;
     }
-    out_of_phase_val[0] *= 1 - window;
     out_of_phase_val[0] += window * out_of_phase;
-    out_of_phase_val[1] *= 1 - window;
-    out_of_phase_val[1] += window * out_of_phase_val[0];
-    out_of_phase_val[2] *= 1 - window;
-    out_of_phase_val[2] += window * out_of_phase_val[1];
-    out_of_phase_val[2] = 0;
-    out_of_phase_left = out_of_phase_val[2] * (rot[2][rot_ix] * rightr + rot[3][rot_ix] * righti);
-    out_of_phase_right = out_of_phase_val[2] * (rot[2][rot_ix] * leftr + rot[3][rot_ix] * lefti);
-    leftr *= 1.0 - out_of_phase_val[2];
-    lefti *= 1.0 - out_of_phase_val[2];
-    rightr *= 1.0 - out_of_phase_val[2];
-    righti *= 1.0 - out_of_phase_val[2];
+    out_of_phase_val[0] *= 1.0 - window;
+    out_of_phase_left = out_of_phase_val[0] * (rot[2][rot_ix] * leftr + rot[3][rot_ix] * lefti);
+    out_of_phase_right = out_of_phase_val[0] * (rot[2][rot_ix] * rightr + rot[3][rot_ix] * righti);
+    leftr *= 1.0 - out_of_phase_val[0];
+    lefti *= 1.0 - out_of_phase_val[0];
+    rightr *= 1.0 - out_of_phase_val[0];
+    righti *= 1.0 - out_of_phase_val[0];
 
     float rlen = (rightr * rightr + righti * righti) + 1e-20;
     float llen = (leftr * leftr + lefti * lefti) + 1e-20;
@@ -811,7 +810,7 @@ struct MultiChannelDriverModel {
     dpos.resize(n);
   }
   void Convert(float *p, size_t n) {
-    return; // do nothing
+    //    return; // do nothing
     // This number relates to the resonance frequence of the speakers.
     // I suspect I have around ~100 Hz.
     // It is an ad hoc formula.
@@ -823,8 +822,8 @@ struct MultiChannelDriverModel {
 
     // damping reduces the speed of the membrane passively as it
     // emits energy or converts it to heat in the suspension deformations
-    const float damping = 0.99999;
-    const float kSomewhatRandomNonPhysicalPositionRegularization = 0.99998;
+    const float damping = 0.9999;
+    const float kSomewhatRandomNonPhysicalPositionRegularization = 0.9999;
 
     const float kInputMul = 0.1;
 
@@ -924,7 +923,7 @@ void Process(const int output_channels_arg, const double distance_to_interval_ra
   double L2_diff_all_channels = 0;
   int64_t total_in = 0;
   bool extend_the_end = true;
-  float out_of_phase_array[kNumRotators][3] = {{0}};
+  float out_of_phase_array[kNumRotators][1] = {{0}};
   for (;;) {
     int64_t out_ix = 0;
     int64_t read = input_stream.readf(input.data(), kBlockSize);
@@ -968,7 +967,7 @@ void Process(const int output_channels_arg, const double distance_to_interval_ra
       rfb.rotators_->IncrementAll();
       for (int rot = kNumRotators - 1; rot >= 0; --rot) {
 	if (rot == -1) {
-	  for (int z = 0; z < 16; ++z) {
+	  for (int z = 0; z < 8; ++z) {
 	    rfb.rotators_->channel[0].accu[z][rot] = 0;
 	    rfb.rotators_->channel[1].accu[z][rot] = 0;
 	  }
@@ -1002,14 +1001,14 @@ void Process(const int output_channels_arg, const double distance_to_interval_ra
         rfb.rotators_->GetTriplet(ratio_expected,
 			          rot,
 				  &out_of_phase_array[rot][0],
-                                  rfb.rotators_->channel[0].accu[14][rot],
-                                  rfb.rotators_->channel[0].accu[15][rot],
-                                  rfb.rotators_->channel[1].accu[14][rot],
-                                  rfb.rotators_->channel[1].accu[15][rot],
-                                  rfb.rotators_->channel[0].accu[8][rot],
-                                  rfb.rotators_->channel[0].accu[9][rot],
-                                  rfb.rotators_->channel[1].accu[8][rot],
-                                  rfb.rotators_->channel[1].accu[9][rot],
+                                  rfb.rotators_->channel[0].accu[6][rot],
+                                  rfb.rotators_->channel[0].accu[7][rot],
+                                  rfb.rotators_->channel[1].accu[6][rot],
+                                  rfb.rotators_->channel[1].accu[7][rot],
+                                  rfb.rotators_->channel[0].accu[4][rot],
+                                  rfb.rotators_->channel[0].accu[5][rot],
+                                  rfb.rotators_->channel[1].accu[4][rot],
+                                  rfb.rotators_->channel[1].accu[5][rot],
 				  rfb.rotators_->window[rot],
 				  left,
                                   center,
@@ -1158,9 +1157,9 @@ void Process(const int output_channels_arg, const double distance_to_interval_ra
 	      sum_in_c += abs(v);
 	    }
 	    sum_all_output += sum_out_c;
-	    static const double kL2Mul = 64.786735192130621 + atof(getenv("VAR257"));
-	    double diff = kL2Mul * sum_out_c - sum_in_c;
-	    L2_diff_all_channels += diff * diff;
+	    static double kMul = 10.808554960080418 + atof(getenv("VAR258"));
+	    double diff = kMul * sum_out_c - sum_in_c;
+	    L2_diff_all_channels += abs(diff);
 	  }
         }
       }
@@ -1179,9 +1178,9 @@ void Process(const int output_channels_arg, const double distance_to_interval_ra
     std::fill(binaural_output.begin(), binaural_output.end(), 0.0);
   }
   //  printf("Energy: %.17f\n", 1.0/sum_all_output);
-  L2_diff_all_channels *= 1.0 + 0.001 * g_entropy;
-  printf("hipsu: %.17f\n", g_entropy);
-  printf("Energy: %.17f\n", L2_diff_all_channels);
+  L2_diff_all_channels += sum_all_output;
+  L2_diff_all_channels /= pow(sum_all_output, 7);
+  printf("Energy: %.17g\n", L2_diff_all_channels);
 };
 
 }  // namespace
